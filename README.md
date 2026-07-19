@@ -1,12 +1,12 @@
-# myosotis-cpp
+# myosotis
 
-Native C++ port of the subset of Myosotis BepInEx patches the team needs, built
+Native C++ port of the subset of the Lethe BepInEx patches the team needs, built
 with `zig cc` (Clang 21) at **C++23** and no external dependencies. Produces a
-single `myosotis.dll` plus a `myosotis-loader.exe` suspended-process launcher.
+single injectable `myosotis.dll` and a `myoink.exe` loader.
 
 ## What it does
 
-Replicates four of the C# Myosotis patches:
+Replicates four of the C# patches:
 
 - **GuardPatch** — neutralizes the `JsonExtensions` anti-cheat by overwriting
   every method's `MethodInfo->methodPointer` with a return-type-aware stub, and
@@ -23,6 +23,36 @@ Replicates four of the C# Myosotis patches:
   map at init by scanning Assembly-CSharp `*Command` types, POSTs synchronously,
   rewrites `"packetId": N` in the response, and invokes the schema's
   `_responseEvent`.
+
+## How method hooking works
+
+il2cpp's managed-to-managed calls use **baked-in direct native call addresses**
+— the compiled caller jumps straight to the method's native body, never reading
+`MethodInfo->methodPointer`. Overwriting `methodPointer` alone only intercepts
+`runtime_invoke`-based calls (reflection), not normal managed calls.
+
+`hook::install_inline` (in `src/hook.cpp`) solves this with **inline hooking**:
+it patches the native code body at `methodPointer` with a jump to our stub, so
+both direct managed calls and `runtime_invoke` paths are intercepted. It also
+overwrites `methodPointer` for completeness.
+
+Because some hooks need to call the original after running (e.g. `SendWebRequest`
+returns a coroutine the caller needs, `Post` must actually send the request),
+`install_inline` builds a **trampoline**: a small x86-64 instruction length
+decoder walks the original prologue, copies enough instructions (≥ the patch
+size) to a freshly `VirtualAlloc`'d executable page, then appends a jump back to
+`original+N`. The trampoline runs the displaced prologue then resumes the
+original, so prefix hooks can call through to it.
+
+Two patch sizes are used:
+
+- **5-byte relative jump** (`E9 rel32`) when the stub is within ±2GB (the common
+  case — our DLL loads near the game).
+- **12-byte absolute jump** (`mov rax, imm64; jmp rax`) otherwise.
+
+If the length decoder can't safely cover the patch size (unknown instruction
+before the boundary), the inline patch is skipped and the method falls back to
+`methodPointer`-only — safe but may miss direct calls for that one method.
 
 ## How il2cpp names resolve
 
@@ -54,11 +84,11 @@ at C++23). Builds the DLL, the loader, and the scan self-test:
 cd cpp
 build.bat            :: all three targets
 build.bat dll        :: just myosotis.dll
-build.bat loader     :: just myosotis-loader.exe
+build.bat loader     :: just myoink.exe
 build.bat test       :: just test_scan.exe
 ```
 
-Produces `cpp/build/myosotis.dll`, `cpp/build/myosotis-loader.exe`, and
+Produces `cpp/build/myosotis.dll`, `cpp/build/myoink.exe`, and
 `cpp/build/test_scan.exe` (the self-test that diffs the runtime scan against
 the embedded map; exit 0 on match). All three build with `-O3 -std=c++23`
 and the full strict warning set (`-Wall -Wextra -Wpedantic -Wconversion
@@ -67,34 +97,44 @@ and the full strict warning set (`-Wall -Wextra -Wpedantic -Wconversion
 
 ## Usage
 
-1. Put `myosotis.dll` and `myosotis.ini` next to each other (any directory).
+1. Put `myosotis.dll`, `myosotis.ini`, and `myoink.exe` next to each other
+   (any directory — the loader finds the DLL by its own path).
 2. Edit `myosotis.ini`:
 
    ```ini
    [myosotis]
    token=<your hardcoded steam JWT>
-   server=https://api.lethelc.site/
+   server=http://127.0.0.1:3000/
    serverinfos_url=https://raw.githubusercontent.com/LEAGUE-OF-NINE/motions-schema/refs/heads/main/serverinfos.json
    log_level=1
    ```
 
    The first run creates a default `myosotis.ini` with these keys if none exists.
-3. Launch the game through the loader:
+3. Launch Limbus Company through Steam (normally — let it pass the launcher
+   anti-cheat on its own).
+4. Run the loader:
 
    ```bat
-   myosotis-loader.exe "C:\Program Files (x86)\Steam\steamapps\common\Limbus Company\LimbusCompany.exe" myosotis.dll
+   myoink
    ```
 
-   The loader `CreateProcessW`s the game with `CREATE_SUSPENDED`, injects
-   `myosotis.dll` via `CreateRemoteThread(LoadLibraryW, <remote path>)`, waits
-   for the load to complete, then `ResumeThread`s the main thread. The DLL's
-   init thread polls for `GameAssembly.dll` + `il2cpp_init` done, then installs
-   all patches. You can also use any other DLL injector against an already-
-   running process — the loader is just a convenience that guarantees the DLL
-   is present before the game's first instruction runs.
+   `myoink` polls up to 5 minutes for a top-level window whose title exactly
+   equals "LimbusCompany" (exact match avoids hitting the launcher process,
+   which rejects `CreateRemoteThread` with `ACCESS_DENIED`). Once the window
+   appears, it injects `myosotis.dll` via `CreateRemoteThread(LoadLibraryW,
+   <remote path>)`. The DLL's init thread polls for `GameAssembly.dll` +
+   `il2cpp_init` done, then installs all patches. Late injection works because
+   the init thread waits for the il2cpp runtime regardless of when the DLL
+   loads.
 
-   Logs go to `OutputDebugStringW` — capture with DebugView or an attached
-   debugger.
+   The DLL writes `myosotis.log` next to itself — since `myoink` loads
+   `myosotis.dll` from next to the loader, the log lands in the myoink
+   directory, not the game directory.
+
+   On load the DLL pops a console window (titled "myosotis") and logs there
+   simultaneously with `OutputDebugStringW` and the log file. Watch the console
+   for `[Myosotis:hook] inline hooked ...` lines confirming each patch, and
+   `... FIRED` lines when the game hits a hooked method.
 
 ## Regenerating the embedded fallback map
 ```bat
@@ -111,9 +151,9 @@ cpp/
   src/                DLL sources
     dllmain.cpp       DllMain → init thread
     init.cpp          config → name scan → bridge → patches
-    log.cpp           OutputDebugStringW
+    log.cpp           console + OutputDebugStringW + file log
     config.cpp        myosotis.ini via GetPrivateProfileStringW
-    hook.cpp          methodPointer-overwrite hook helper
+    hook.cpp          inline (native-body) hook helper with trampoline
     http.cpp          synchronous WinHTTP wrapper
     il2cpp/
       pe.cpp           no-dep PE parser
@@ -126,13 +166,14 @@ cpp/
       http.cpp         UnityWebRequest redirect + serverinfos rewrite
       request.cpp      AddRequest → synchronous WinHTTP transport
   tools/              dev/diagnostic executables + scripts
-    loader.cpp        suspended-process loader (CreateProcess + remote LoadLibrary + resume)
+    loader.cpp        myoink — attach-mode injector (no args)
     test_scan.cpp     standalone scan self-test
     regen_map.py      regenerates generated/ from UnityPlayer.dll
-    analyze_mapping.py copied from myosotis/la-ng — the offline resolver regen_map.py drives
+    analyze_mapping.py copied from la-ng — the offline resolver regen_map.py drives
     server.py         logging HTTP server for local dev (127.0.0.1:3000)
   build.bat           build driver — `build.bat [dll|loader|test|all]`
   .gitignore          ignores build/ and generated/
+```
 
 ## Known limitations / TODO
 
@@ -142,10 +183,15 @@ cpp/
   the member name — so the `path → packetId` map keys currently use the string
   part of the API path only. This needs `System.Enum.GetName(Type, object)` and
   `Type.GetTypeFromHandle` wired through the il2cpp bridge to be fully faithful.
-  See the `build_api_path` function in `src/patches/request.cpp`.
+  See `build_api_path` in `src/patches/request.cpp`.
 - **AuthTicket / SteamId field offsets** are hardcoded (0x10 after the object
   header) rather than resolved via `il2cpp_class_get_field_from_name`. Robust
   against the current build; would need the field-by-name path if Steamworks.NET
   layout changes.
 - **`_responseEvent` field offset** on `HttpApiSchema` is hardcoded to 0x18.
   Same caveat — should be resolved by field name for long-term stability.
+- **Inline hook length decoder** handles the common il2cpp prologue opcodes but
+  is not a full disassembler. Methods whose prologue uses an unsupported opcode
+  within the first 5 bytes fall back to `methodPointer`-only (logged as
+  `inline hook skipped`). Extending `insn_len` covers more; a full LDE would
+  cover all.

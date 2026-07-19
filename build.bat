@@ -49,9 +49,9 @@ echo Built build\myosotis.dll
 exit /b 0
 
 :build_loader
-%ZIG% c++ %OPT% -municode tools\loader.cpp -lkernel32 -o build\myosotis-loader.exe
+%ZIG% c++ %OPT% -municode tools\loader.cpp -lkernel32 -o build\myoink.exe
 if errorlevel 1 ( echo LOADER BUILD FAILED & exit /b 1 )
-echo Built build\myosotis-loader.exe
+echo Built build\myoink.exe
 exit /b 0
 
 :build_test

@@ -26,6 +26,8 @@ void ensure_log_path() {
         InitializeCriticalSection(&g_log_lock);
         g_log_lock_inited = true;
     }
+    // Log next to the DLL. Since myoink loads myosotis.dll from next to
+    // itself, this puts myosotis.log in the myoink directory.
     wchar_t exe[MAX_PATH] = {};
     HMODULE h = nullptr;
     GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
