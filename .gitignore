@@ -1,0 +1,23 @@
+# Build outputs
+build/
+*.pdb
+*.lib
+*.obj
+*.exp
+*.ilk
+
+# Generated il2cpp name map (reproducible via tools/regen_map.py)
+generated/
+
+# Python
+__pycache__/
+*.pyc
+
+# Editor / OS cruft
+.vs/
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
