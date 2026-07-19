@@ -20,9 +20,11 @@ Replicates four of the C# patches:
   and the `X-Requested-With` CDN password are dropped.
 - **Request** — replaces the game's encrypted transport with plain HTTP via
   WinHTTP: intercepts `HttpApiRequester.AddRequest`, builds a `path → packetId`
-  map at init by scanning Assembly-CSharp `*Command` types, POSTs synchronously,
-  rewrites `"packetId": N` in the response, and invokes the schema's
-  `_responseEvent`.
+  map at init by scanning Assembly-CSharp `*Command` types (resolving the
+  `apiClass` enum name via `ToString` for the full `/<enum>/<path>` key),
+  rewrites the `"packetId"` in the request body with the map's value before
+  POSTing, and invokes the schema's `_responseEvent` with the response. The
+  server echoes the packetId back, so no response rewriting is needed.
 
 ## How method hooking works
 
@@ -164,7 +166,7 @@ cpp/
       guard.cpp        anti-cheat neutralization
       login.cpp        hardcoded steam token + SteamClient/SteamUser hooks
       http.cpp         UnityWebRequest redirect + serverinfos rewrite
-      request.cpp      AddRequest → synchronous WinHTTP transport
+      request.cpp      AddRequest → synchronous WinHTTP, packetId body rewrite
   tools/              dev/diagnostic executables + scripts
     loader.cpp        myoink — attach-mode injector (no args)
     test_scan.cpp     standalone scan self-test
@@ -177,21 +179,13 @@ cpp/
 
 ## Known limitations / TODO
 
-- **Request patch `apiPath` resolution.** The C# version calls the schema's
-  `get_ApiClass` (returns an enum) and lowercases `enum.ToString()`. We resolve
-  the enum value's integer but haven't wired up `System.Enum.GetName` to recover
-  the member name — so the `path → packetId` map keys currently use the string
-  part of the API path only. This needs `System.Enum.GetName(Type, object)` and
-  `Type.GetTypeFromHandle` wired through the il2cpp bridge to be fully faithful.
-  See `build_api_path` in `src/patches/request.cpp`.
-- **AuthTicket / SteamId field offsets** are hardcoded (0x10 after the object
-  header) rather than resolved via `il2cpp_class_get_field_from_name`. Robust
-  against the current build; would need the field-by-name path if Steamworks.NET
-  layout changes.
-- **`_responseEvent` field offset** on `HttpApiSchema` is hardcoded to 0x18.
-  Same caveat — should be resolved by field name for long-term stability.
 - **Inline hook length decoder** handles the common il2cpp prologue opcodes but
   is not a full disassembler. Methods whose prologue uses an unsupported opcode
   within the first 5 bytes fall back to `methodPointer`-only (logged as
   `inline hook skipped`). Extending `insn_len` covers more; a full LDE would
   cover all.
+- **Synchronous request handling.** `AddRequest` is blocked (prefix returns
+  false equivalent) and the response is delivered synchronously via
+  `_responseEvent.Invoke`. The C# version uses a coroutine; the synchronous
+  approach works but blocks the game thread for the duration of the HTTP
+  round-trip.

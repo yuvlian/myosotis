@@ -12,6 +12,24 @@
 namespace myosotis::patches {
 
 namespace {
+// Find a field offset by name on a class hierarchy.
+size_t find_field_offset(il2cpp::Il2CppClass* klass, const char* name) {
+    for (il2cpp::Il2CppClass* k = klass; k; k = il2cpp::class_get_parent(k)) {
+        void* iter = nullptr;
+        while (auto* f = il2cpp::class_get_fields(k, &iter)) {
+            const char* fn = il2cpp::field_get_name(f);
+            if (fn && strcmp(fn, name) == 0) {
+                size_t off = il2cpp::field_get_offset(f);
+                const char* ns = il2cpp::class_get_namespace(k);
+                MYO_LOG("login", "field {} at offset 0x{:x} on {}.{}", name, off, ns ? ns : "", il2cpp::class_get_name(k));
+                return off;
+            }
+        }
+    }
+    MYO_LOG("login", "field {} not found on hierarchy", name);
+    return 0;
+}
+
 
 // Narrow -> wide helper for config strings.
 std::string narrow(const std::wstring& w) {
@@ -69,11 +87,6 @@ il2cpp::Il2CppObject* build_byte_array(const std::string& bytes) {
     il2cpp::Il2CppObject* arr = g_array_new(arr_class, bytes.size());
     if (!arr) return nullptr;
     // il2cpp array layout: header + bounds + length (i32 at offset 0x10) + data at 0x20
-    // (offset varies; use the documented offset from il2cpp_array_object_header_size if needed).
-    // For Steamworks.NET byte[] the simplest reliable path is to memcpy into the data area
-    // just past the length field. We use offset 0x20 (32) which is the default for il2cpp arrays.
-    std::memcpy(reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(arr) + 0x20),
-                bytes.data(), bytes.size());
     return arr;
 }
 
@@ -86,12 +99,9 @@ extern "C" il2cpp::Il2CppObject* __cdecl myosotis_get_auth_ticket() {
     if (!ticket_cls) ticket_cls = il2cpp::find_class("Steamworks", "AuthTicket_t");
     if (!ticket_cls) return nullptr;
     il2cpp::Il2CppObject* ticket = static_cast<il2cpp::Il2CppObject*>(il2cpp::object_new(ticket_cls));
-    if (!ticket) return nullptr;
-    // AuthTicket.Data is the first instance field after the 0x10 object header
-    // in Steamworks.NET's layout. We hardcode the offset here (the bridge
-    // doesn't expose il2cpp_class_get_field_from_name); it's marked as a
-    // known limitation in README.md.
-    g_authticket_data_off = 0x10;
+    // Resolve the Data field by name on the AuthTicket class hierarchy.
+    g_authticket_data_off = find_field_offset(ticket_cls, "Data");
+    if (!g_authticket_data_off) g_authticket_data_off = 0x10;
     il2cpp::Il2CppObject* data_arr = build_byte_array(g_token_utf8);
     if (!data_arr) return nullptr;
     *reinterpret_cast<void**>(reinterpret_cast<uintptr_t>(ticket) + g_authticket_data_off) = data_arr;
@@ -161,12 +171,11 @@ bool install_login() {
     // Pre-build the SteamId object so the hook just mutates its Value field.
     if (il2cpp::Il2CppClass* sid = il2cpp::find_class("Steamworks", "SteamId")) {
         g_steamid = static_cast<il2cpp::Il2CppObject*>(il2cpp::object_new(sid));
-        // SteamId.Value is the first field (ulong). Offset 0x10 after header.
-        g_steamid_value_off = 0x10;
+        g_steamid_value_off = find_field_offset(sid, "Value");
+        if (!g_steamid_value_off) g_steamid_value_off = 0x10;
     } else {
         MYO_LOG("login", "Steamworks.SteamId not found");
     }
-
     install_one("Steamworks", "SteamClient", "Init", reinterpret_cast<void*>(&myosotis_steam_init));
     install_one("Steamworks", "ISteamUser", "GetSteamID", reinterpret_cast<void*>(&myosotis_get_steamid));
     install_one("Steamworks", "SteamUser", "GetAuthSessionTicket", reinterpret_cast<void*>(&myosotis_get_auth_ticket));

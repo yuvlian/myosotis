@@ -61,7 +61,8 @@ bool init() {
     (void)fn("il2cpp_class_get_methods");
     (void)fn("il2cpp_class_get_method_from_name");
     (void)fn("il2cpp_class_get_fields");
-    (void)fn("il2cpp_class_instance_size");
+    (void)fn("il2cpp_field_get_name");
+    (void)fn("il2cpp_field_get_offset");
     (void)fn("il2cpp_class_get_type");
     (void)fn("il2cpp_class_from_type");
     (void)fn("il2cpp_class_is_generic");
@@ -74,8 +75,8 @@ bool init() {
     (void)fn("il2cpp_type_get_class_or_element_class");
     (void)fn("il2cpp_runtime_invoke");
     (void)fn("il2cpp_runtime_class_init");
+    (void)fn("il2cpp_object_get_class");
     (void)fn("il2cpp_object_new");
-    (void)fn("il2cpp_string_new");
     (void)fn("il2cpp_string_chars");
     (void)fn("il2cpp_string_length");
     (void)fn("il2cpp_thread_attach");
@@ -151,6 +152,14 @@ Il2CppField* class_get_fields(Il2CppClass* klass, void** iter) {
     using Sig = Il2CppField* (*)(Il2CppClass*, void**);
     return fn_t<Sig>("il2cpp_class_get_fields")(klass, iter);
 }
+const char* field_get_name(Il2CppField* field) {
+    using Sig = const char* (*)(Il2CppField*);
+    return fn_t<Sig>("il2cpp_field_get_name")(field);
+}
+size_t field_get_offset(Il2CppField* field) {
+    using Sig = size_t (*)(Il2CppField*);
+    return fn_t<Sig>("il2cpp_field_get_offset")(field);
+}
 int32_t class_instance_size(Il2CppClass* klass) {
     using Sig = int32_t (*)(Il2CppClass*);
     return fn_t<Sig>("il2cpp_class_instance_size")(klass);
@@ -209,6 +218,10 @@ void runtime_class_init(Il2CppClass* klass) {
 void* object_new(Il2CppClass* klass) {
     using Sig = void* (*)(Il2CppClass*);
     return fn_t<Sig>("il2cpp_object_new")(klass);
+}
+Il2CppClass* object_get_class(Il2CppObject* obj) {
+    using Sig = Il2CppClass* (*)(Il2CppObject*);
+    return fn_t<Sig>("il2cpp_object_get_class")(obj);
 }
 
 Il2CppString* string_new(const char* utf8) {

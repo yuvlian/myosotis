@@ -36,9 +36,9 @@ bool url_host_scheme(const std::string& url, std::string& scheme, std::string& h
     scheme = url.substr(0, pos);
     size_t p = pos + 3;
     size_t slash = url.find('/', p);
+    // Keep the port in `host` (e.g. "127.0.0.1:3000"); stripping it breaks
+    // redirects to non-default ports.
     host = url.substr(p, slash == std::string::npos ? std::string::npos : slash - p);
-    auto colon = host.find(':');
-    if (colon != std::string::npos) host = host.substr(0, colon);
     return true;
 }
 
@@ -77,6 +77,23 @@ void set_uwr_url(il2cpp::Il2CppObject* uwr, const std::string& url) {
     il2cpp::runtime_invoke(setter, uwr, args, &exc);
 }
 
+void set_uwr_header(il2cpp::Il2CppObject* uwr, const std::string& name, const std::string& value) {
+    static il2cpp::Il2CppMethod* setter = nullptr;
+    if (!setter) {
+        il2cpp::Il2CppClass* k = il2cpp::find_class("UnityEngine.Networking", "UnityWebRequest");
+        if (!k) return;
+        setter = il2cpp::class_get_method_from_name(k, "SetRequestHeader", 2);
+        if (!setter) { MYO_LOG("http", "SetRequestHeader /2 not found"); return; }
+        MYO_LOG("http", "found SetRequestHeader /2");
+    }
+    il2cpp::Il2CppString* sn = il2cpp::string_new(name.c_str());
+    il2cpp::Il2CppString* sv = il2cpp::string_new(value.c_str());
+    void* args[2] = { sn, sv };
+    void* exc = nullptr;
+    il2cpp::runtime_invoke(setter, uwr, args, &exc);
+    MYO_LOG("http", "SetRequestHeader {}={} (exc={})", name, value, exc ? static_cast<void*>(exc) : nullptr);
+}
+
 std::string get_uwr_url(il2cpp::Il2CppObject* uwr) {
     static il2cpp::Il2CppMethod* getter = nullptr;
     if (!getter) {
@@ -107,7 +124,12 @@ extern "C" il2cpp::Il2CppObject* __cdecl myosotis_pre_send(il2cpp::Il2CppObject*
                     size_t extra = path.find('/', strlen("/serverinfos_"));
                     if (extra == std::string::npos) {
                         std::string si = narrow(myosotis::config::g.serverinfos_url);
-                        if (!si.empty()) set_uwr_url(self, si);
+                        if (!si.empty()) {
+                            // Preserve the original URL so the redirect target
+                            MYO_LOG("http", "serverinfos redirect: {} -> {} (header X-Original-Url={})", url, si, url);
+                            set_uwr_header(self, "X-Original-Url", url);
+                            set_uwr_url(self, si);
+                        }
                     }
                 }
             }

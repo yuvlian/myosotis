@@ -32,8 +32,6 @@ bool url_host_scheme(const std::string& url, std::string& scheme, std::string& h
     size_t p = pos + 3;
     size_t slash = url.find('/', p);
     host = url.substr(p, slash == std::string::npos ? std::string::npos : slash - p);
-    auto colon = host.find(':');
-    if (colon != std::string::npos) host = host.substr(0, colon);
     return true;
 }
 
@@ -157,12 +155,35 @@ bool build_api_path(il2cpp::Il2CppClass* klass, std::string& out) {
     if (!inst) return false;
     il2cpp::runtime_class_init(klass);
     std::string path = invoke_string_method(inst, m_str);
-    // apiClass enum-name resolution unimplemented (needs System.Enum.GetName
-    // + Type.GetTypeFromHandle wired through the bridge). Use path-only for
-    // now — the POST still fires, just with an incomplete packetId key.
-    MYO_LOG("request", "apiClass name resolution unimplemented; using path-only for {}",
-             il2cpp::class_get_name(klass));
-    out = path.empty() ? std::string("/") : (path[0] == '/' ? path : std::string("/") + path);
+
+    // Resolve the apiClass enum name: invoke the enum-returning method on the
+    // instance, then call ToString() on the boxed enum to get the member name.
+    std::string enum_name;
+    void* exc = nullptr;
+    il2cpp::Il2CppObject* enum_obj = static_cast<il2cpp::Il2CppObject*>(
+        il2cpp::runtime_invoke(m_enum, inst, nullptr, &exc));
+    if (enum_obj && !exc) {
+        // Find ToString() /0 on the enum's runtime class.
+        il2cpp::Il2CppClass* ec = il2cpp::object_get_class(enum_obj);
+        if (ec) {
+            il2cpp::Il2CppMethod* ts = il2cpp::class_get_method_from_name(ec, "ToString", 0);
+            if (ts) {
+                void* exc2 = nullptr;
+                il2cpp::Il2CppString* es = static_cast<il2cpp::Il2CppString*>(
+                    il2cpp::runtime_invoke(ts, enum_obj, nullptr, &exc2));
+                if (es && !exc2) enum_name = il2cpp::string_to_utf8(es);
+            }
+        }
+    }
+
+    // Lowercase the enum name and prepend as /<enumname><path>.
+    std::string lower_enum = enum_name;
+    for (char& c : lower_enum) { if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a'); }
+
+    std::string full = "/" + lower_enum + (path.empty() ? std::string() :
+                       (path[0] == '/' ? path : std::string("/") + path));
+    out = full;
+    MYO_LOG("request", "api_path for {} = {} (enum={})", il2cpp::class_get_name(klass), out, enum_name);
     return !out.empty();
 }
 
@@ -303,7 +324,6 @@ void build_packet_id_map() {
 size_t g_response_event_off = 0;
 il2cpp::Il2CppClass* g_schema_class = nullptr;
 
-il2cpp::Il2CppMethod* g_invoke_on_event = nullptr;  // UnityEvent<string>.Invoke(string)
 
 // Per-schema URL/body method cache (keyed by schema class).
 struct SchemaMethods {
@@ -341,19 +361,17 @@ size_t find_response_event_off(il2cpp::Il2CppClass* klass) {
     for (il2cpp::Il2CppClass* k = klass; k; k = il2cpp::class_get_parent(k)) {
         void* iter = nullptr;
         while (auto* f = il2cpp::class_get_fields(k, &iter)) {
-            // FieldInfo layout: name at offset 8 (after methodPointer-free FieldInfo).
-            // We didn't wrap field_get_name. Use a crude check: _responseEvent is
-            // the only field of type UnityEvent<string>. Since we can't read the
-            // field type's name without field_get_type + type_get_name, we fall
-            // back to a hardcoded offset (Steamworks-style): first instance field
-            // on HttpApiSchema is _responseEvent.
-            (void)f;
+            const char* fname = il2cpp::field_get_name(f);
+            if (fname && strcmp(fname, "_responseEvent") == 0) {
+                g_response_event_off = il2cpp::field_get_offset(f);
+                const char* ns = il2cpp::class_get_namespace(k);
+                MYO_LOG("request", "found _responseEvent at offset 0x{:x} on {}.{}",
+                        g_response_event_off, ns ? ns : "", il2cpp::class_get_name(k));
+                return g_response_event_off;
+            }
         }
     }
-    // Hardcoded: HttpApiSchema layout in the current build puts _responseEvent at
-    // offset 0x18 (3rd pointer after the 0x10 object header). This is fragile
-    // but matches the observed layout; verify by reading a known schema at
-    // runtime when debugging.
+    MYO_LOG("request", "_responseEvent field not found on hierarchy; using 0x18 fallback");
     g_response_event_off = 0x18;
     return g_response_event_off;
 }
@@ -387,56 +405,69 @@ extern "C" void __cdecl myosotis_add_request(il2cpp::Il2CppObject* self, il2cpp:
     std::string final_url = server.empty() ? url : url_replace_host_scheme(url, server);
 
     std::string path = url_path(final_url);
-    auto it = g_packet_ids.find(path);
-    std::string pid_str = (it != g_packet_ids.end()) ? std::to_string(it->second) : std::string{};
 
-    myosotis::http::Response r = myosotis::http::post(final_url, body, pid_str);
+    // Look up the correct packetId from our static map (path → packetId).
+    auto it = g_packet_ids.find(path);
+    std::string map_pid = (it != g_packet_ids.end()) ? std::to_string(it->second) : std::string{};
+
+    // Replace the packetId in the request body with the map's value so the
+    // server receives the correct one. The server echoes it back, so no
+    // response rewriting is needed.
+    std::string body_out = body;
+    if (!map_pid.empty()) {
+        const char* needle = "\"packetId\":";
+        size_t p = body_out.find(needle);
+        if (p != std::string::npos) {
+            p += strlen(needle);
+            while (p < body_out.size() && (body_out[p] == ' ' || body_out[p] == '\t')) ++p;
+            size_t digits_start = p;
+            while (p < body_out.size() && body_out[p] >= '0' && body_out[p] <= '9') ++p;
+            if (p > digits_start) {
+                body_out.replace(digits_start, p - digits_start, map_pid);
+            }
+        }
+    }
+    MYO_LOG("request", "POST {} (path={} pid={} body_len={})", final_url, path, map_pid.empty() ? "none" : map_pid, body_out.size());
+
+    myosotis::http::Response r = myosotis::http::post(final_url, body_out, map_pid);
     if (r.status == 0) {
         MYO_LOG("request", "POST {} failed: {}", final_url, r.error);
         return;
     }
+    MYO_LOG("request", "response status={} body={}", r.status, r.body);
     std::string text = std::move(r.body);
-    if (!pid_str.empty()) {
-        // Rewrite "packetId": N -> "packetId": <pid>
-        // Simple regex-free replace: find "packetId": <digits> and swap.
-        const char* needle = "\"packetId\":";
-        size_t p = text.find(needle);
-        if (p != std::string::npos) {
-            p += strlen(needle);
-            while (p < text.size() && (text[p] == ' ' || text[p] == '\t')) ++p;
-            size_t digits_start = p;
-            while (p < text.size() && text[p] >= '0' && text[p] <= '9') ++p;
-            if (p > digits_start) {
-                text.replace(digits_start, p - digits_start, pid_str);
-            }
-        }
-    }
 
     // Invoke schema._responseEvent.Invoke(text).
     size_t off = find_response_event_off(g_schema_class);
     void* evt = *reinterpret_cast<void**>(reinterpret_cast<uintptr_t>(schema) + off);
     if (!evt) { MYO_LOG("request", "responseEvent is null at off 0x{:x}", off); return; }
-    if (!g_invoke_on_event) {
-        il2cpp::Il2CppClass* ue = il2cpp::find_class("UnityEngine.Events", "UnityEvent`1");
-        if (!ue) ue = il2cpp::find_class("UnityEngine.Events", "UnityEvent");
-        // We need the instantiated UnityEvent<string>.Invoke(string) method. Without
-        // generic resolution we look for a method named "Invoke" with 1 param.
+
+    // Resolve Invoke(string) on the actual runtime class of the event object.
+    // Cache it — the event type is the same (DelegateEventString) for every
+    // schema instance.
+    static il2cpp::Il2CppMethod* invoke_method = nullptr;
+    if (!invoke_method) {
+        il2cpp::Il2CppClass* ue = il2cpp::object_get_class(evt);
         if (ue) {
             void* it2 = nullptr;
             while (auto* m = il2cpp::class_get_methods(ue, &it2)) {
-                if (strcmp(il2cpp::method_get_name(m), "Invoke") == 0 &&
-                    il2cpp::method_get_param_count(m) == 1) {
-                    g_invoke_on_event = m;
+                const char* mn = il2cpp::method_get_name(m);
+                uint32_t pc = il2cpp::method_get_param_count(m);
+                if (mn && strcmp(mn, "Invoke") == 0 && pc == 1) {
+                    invoke_method = m;
+                    const char* ns = il2cpp::class_get_namespace(ue);
+                    MYO_LOG("request", "cached Invoke /1 on {}.{}", ns ? ns : "", il2cpp::class_get_name(ue));
                     break;
                 }
             }
         }
     }
-    if (!g_invoke_on_event) { MYO_LOG("request", "UnityEvent.Invoke not resolved"); return; }
+    if (!invoke_method) { MYO_LOG("request", "UnityEvent.Invoke not resolved"); return; }
     il2cpp::Il2CppString* s = il2cpp::string_new(text.c_str());
     void* args[1] = { s };
     void* exc = nullptr;
-    il2cpp::runtime_invoke(g_invoke_on_event, evt, args, &exc);
+    il2cpp::runtime_invoke(invoke_method, evt, args, &exc);
+    if (exc) MYO_LOG("request", "_responseEvent.Invoke threw (exc={})", static_cast<void*>(exc));
 }
 
 // Log every method named `method` on `klass` (all overloads), so we can see

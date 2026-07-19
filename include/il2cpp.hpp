@@ -58,6 +58,8 @@ bool            class_is_enum(Il2CppClass* klass);
 Il2CppMethod*   class_get_methods(Il2CppClass* klass, void** iter);
 Il2CppMethod*   class_get_method_from_name(Il2CppClass* klass, const char* name, int args_count);
 Il2CppField*    class_get_fields(Il2CppClass* klass, void** iter);
+const char*     field_get_name(Il2CppField* field);
+size_t          field_get_offset(Il2CppField* field);
 int32_t         class_instance_size(Il2CppClass* klass);
 Il2CppType*     class_get_type(Il2CppClass* klass);
 Il2CppClass*    class_from_type(Il2CppType* t);
@@ -75,7 +77,7 @@ Il2CppClass*    type_get_class_or_element_class(Il2CppType* t);
 void*           runtime_invoke(Il2CppMethod* m, void* obj, void** params, void** exc);
 void            runtime_class_init(Il2CppClass* klass);
 void*           object_new(Il2CppClass* klass);
-
+Il2CppClass*    object_get_class(Il2CppObject* obj);
 Il2CppString*   string_new(const char* utf8);
 int32_t         string_length(Il2CppString* s);
 const uint16_t* string_chars(Il2CppString* s);
