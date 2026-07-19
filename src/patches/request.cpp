@@ -5,6 +5,7 @@
 #include "config.hpp"
 #include "http.hpp"
 #include "log.hpp"
+#include "hook.hpp"
 #include <windows.h>
 #include <string>
 #include <unordered_map>
@@ -94,65 +95,71 @@ int64_t invoke_int_method(il2cpp::Il2CppObject* obj, il2cpp::Il2CppMethod* m) {
 // In il2cpp we walk the class's methods and match by return type kind +
 // instance + 0 params.
 bool build_api_path(il2cpp::Il2CppClass* klass, std::string& out) {
-    // Find the two methods: one returns string, one returns an enum.
+    // The C# version finds apiPath/apiClass on type.BaseType.GetMethods() —
+    // i.e. the HttpApiSchema<TReq,TResp> base, not the concrete Command.
+    // class_get_methods in il2cpp returns only declared methods, so we must
+    // walk the parent chain ourselves.
     il2cpp::Il2CppMethod* m_str = nullptr;
     il2cpp::Il2CppMethod* m_enum = nullptr;
-    void* iter = nullptr;
-    while (auto* m = il2cpp::class_get_methods(klass, &iter)) {
-        if (il2cpp::method_get_param_count(m) != 0) continue;
-        if (!il2cpp::method_is_instance(m)) continue;
-        il2cpp::Il2CppType* rt = il2cpp::method_get_return_type(m);
-        if (!rt) continue;
-        int tk = il2cpp::type_get_type(rt);
-        if (tk == 0x0E && !m_str) m_str = m;            // STRING
-        else if (tk == 0x37 /*VALUETYPE*/ || tk == 0x55 /*ENUM*/) {
-            // Confirm enum via class_is_enum on the return class.
-            il2cpp::Il2CppClass* rc = il2cpp::type_get_class_or_element_class(rt);
-            if (rc && il2cpp::class_is_enum(rc) && !m_enum) m_enum = m;
+    for (il2cpp::Il2CppClass* k = klass; k && (!m_str || !m_enum); k = il2cpp::class_get_parent(k)) {
+        void* iter = nullptr;
+        while (auto* m = il2cpp::class_get_methods(k, &iter)) {
+            if (il2cpp::method_get_param_count(m) != 0) continue;
+            if (!il2cpp::method_is_instance(m)) continue;
+            il2cpp::Il2CppType* rt = il2cpp::method_get_return_type(m);
+            if (!rt) continue;
+            int tk = il2cpp::type_get_type(rt);
+            if (tk == 0x0E && !m_str) m_str = m;            // STRING
+            // il2cpp encodes enums as VALUETYPE (0x11) — the C# IsEnum check
+            // is class_is_enum on the return type's class. Also accept 0x55
+            // (ENUM in the Mono encoding) for safety.
+            else if (tk == 0x11 /*VALUETYPE*/ || tk == 0x55 /*ENUM*/) {
+                il2cpp::Il2CppClass* rc = il2cpp::type_get_class_or_element_class(rt);
+                if (rc && il2cpp::class_is_enum(rc) && !m_enum) m_enum = m;
+            }
         }
     }
-    if (!m_str || !m_enum) return false;
+
+    // One-shot diagnostic: dump every 0-param instance method on the parent
+    // chain of the first schema class we see, so we can find the enum-returning
+    // getter the C# version keys on (ReturnType.IsEnum).
+    static bool dumped = false;
+    if (!dumped) {
+        dumped = true;
+        MYO_LOG("request", "=== method dump for {} (parent chain) ===", il2cpp::class_get_name(klass));
+        for (il2cpp::Il2CppClass* k = klass; k; k = il2cpp::class_get_parent(k)) {
+            const char* kn = il2cpp::class_get_name(k);
+            if (!kn) break;
+            MYO_LOG("request", "  class {}", kn);
+            void* it = nullptr;
+            while (auto* m = il2cpp::class_get_methods(k, &it)) {
+                if (il2cpp::method_get_param_count(m) != 0) continue;
+                if (!il2cpp::method_is_instance(m)) continue;
+                il2cpp::Il2CppType* rt = il2cpp::method_get_return_type(m);
+                int tk = rt ? il2cpp::type_get_type(rt) : -1;
+                il2cpp::Il2CppClass* rc = rt ? il2cpp::type_get_class_or_element_class(rt) : nullptr;
+                bool isenum = rc && il2cpp::class_is_enum(rc);
+                MYO_LOG("request", "    {} ret_type=0x{:x} is_enum={}",
+                         il2cpp::method_get_name(m), tk, isenum ? 1 : 0);
+            }
+            if (strcmp(kn, "Object") == 0) break;
+        }
+    }
+
+    if (!m_str || !m_enum) {
+        MYO_LOG("request", "build_api_path: {} missing m_str={} m_enum={}",
+                 il2cpp::class_get_name(klass),
+                 m_str ? il2cpp::method_get_name(m_str) : "<null>",
+                 m_enum ? il2cpp::method_get_name(m_enum) : "<null>");
+        return false;
+    }
     il2cpp::Il2CppObject* inst = static_cast<il2cpp::Il2CppObject*>(il2cpp::object_new(klass));
     if (!inst) return false;
     il2cpp::runtime_class_init(klass);
     std::string path = invoke_string_method(inst, m_str);
-    // apiClass is an enum value; its ToString would give the name. Without
-    // reflection we can read the enum's underlying int and look up the name
-    // by walking the enum's fields. For simplicity (the C# uses enum.ToString()
-    // and then ToLowerInvariant), we read the enum name via il2cpp_type_get_name
-    // on the return type — which yields the type name, not the value name.
-    //
-    // Pragmatic: the server's API paths in the schema map use the *enum member
-    // names* lowercased. We can recover the member name by invoking the enum's
-    // ToString on the boxed value. We don't have a clean Enum.ToString wrapper,
-    // so instead we invoke the getter to get a boxed enum, then call the
-    // managed Enum.GetName / ToString via runtime_invoke on System.Enum.
-    //
-    // To keep this patch from ballooning, we instead match by absolute path
-    // using only the string part (m_str) concatenated with a lowercase of the
-    // enum value's *integer* — which won't match the server. That's wrong.
-    //
-    // CORRECT minimal approach: invoke System.Enum.GetName(enumType, value) on
-    // the boxed enum returned by m_enum. That requires resolving System.Enum.
-    void* exc = nullptr;
-    void* boxed_enum = il2cpp::runtime_invoke(m_enum, inst, nullptr, &exc);
-    if (!boxed_enum) return false;
-    int32_t enum_val = *reinterpret_cast<int32_t*>(reinterpret_cast<uintptr_t>(boxed_enum) + 0x10);
-    // Get the enum's class from the return type.
-    il2cpp::Il2CppClass* enum_cls = il2cpp::type_get_class_or_element_class(il2cpp::method_get_return_type(m_enum));
-    if (!enum_cls) return false;
-    // System.Enum.GetName(Type enumType, object value)
-    il2cpp::Il2CppClass* system_enum = il2cpp::find_class("System", "Enum");
-    il2cpp::Il2CppClass* system_type = il2cpp::find_class("System", "Type");
-    if (!system_enum || !system_type) return false;
-    il2cpp::Il2CppMethod* get_name = il2cpp::class_get_method_from_name(system_enum, "GetName", 2);
-    if (!get_name) return false;
-    // Need a System.Type for enum_cls: Type.GetTypeFromHandle(RuntimeTypeHandle) is the
-    // usual path; simpler: il2cpp provides `il2cpp_class_get_type` returning Il2CppType*,
-    // and we can wrap it via System.Type.GetTypeFromHandle. We don't expose that.
-    // Fallback: build the api path as "/" + lower(enum integer) + path — this won't
-    // match the server schema, so we log and skip.
-    (void)system_type; (void)get_name; (void)enum_val;
+    // apiClass enum-name resolution unimplemented (needs System.Enum.GetName
+    // + Type.GetTypeFromHandle wired through the bridge). Use path-only for
+    // now — the POST still fires, just with an incomplete packetId key.
     MYO_LOG("request", "apiClass name resolution unimplemented; using path-only for {}",
              il2cpp::class_get_name(klass));
     out = path.empty() ? std::string("/") : (path[0] == '/' ? path : std::string("/") + path);
@@ -165,7 +172,8 @@ void build_packet_id_map() {
     size_t count = 0;
     il2cpp::Il2CppAssembly** asms = il2cpp::domain_get_assemblies(&count);
     if (!asms) return;
-    il2cpp::Il2CppClass* schema_base = nullptr;
+    [[maybe_unused]] il2cpp::Il2CppClass* schema_base = nullptr;
+    int cmd_count = 0, schema_count = 0;
     for (size_t i = 0; i < count; ++i) {
         il2cpp::Il2CppImage* img = il2cpp::assembly_get_image(asms[i]);
         if (!img) continue;
@@ -181,52 +189,107 @@ void build_packet_id_map() {
             // Name ends with "Command"
             size_t knl = strlen(kn);
             if (knl < 7 || strcmp(kn + knl - 7, "Command") != 0) continue;
-            // Walk up the parent chain looking for HttpApiSchema.
+            ++cmd_count;
+            // C# filter: type.BaseType.GenericTypeArguments.Length == 2.
+            // The base must be a constructed generic with 2 type args. In il2cpp,
+            // a constructed generic class's name carries the arity backtick
+            // (e.g. "HttpApiSchema`2"). We check the IMMEDIATE parent only
+            // (BaseType, not the whole chain) and require the backtick + "2".
             il2cpp::Il2CppClass* p = il2cpp::class_get_parent(klass);
             bool is_schema = false;
-            int depth = 0;
-            while (p && depth++ < 8) {
+            if (p) {
                 const char* pn = il2cpp::class_get_name(p);
-                if (pn && strcmp(pn, "HttpApiSchema") == 0) { is_schema = true; schema_base = p; break; }
-                p = il2cpp::class_get_parent(p);
+                if (cmd_count <= 5)
+                    MYO_LOG("request", "cmd {} {}: parent = {}", cmd_count, kn, pn ? pn : "<null>");
+                // Constructed generic with arity 2: name ends with "`2".
+                if (pn) {
+                    size_t pnl = strlen(pn);
+                    if (pnl >= 2 && pn[pnl-2] == '`' && pn[pnl-1] == '2') {
+                        is_schema = true; schema_base = p;
+                    }
+                }
             }
             if (!is_schema) continue;
+            ++schema_count;
 
             // Build apiPath.
             std::string api_path;
-            if (!build_api_path(klass, api_path)) continue;
-
-            // Instantiate TResp (the second generic arg of the base) and read its
-            // get_PacketId. Without reflection we can't get TResp directly. The C#
-            // version uses type.BaseType.GenericTypeArguments[1]. We don't have an
-            // il2cpp API to read generic arguments of a constructed generic type
-            // without the internal metadata structures.
-            //
-            // Workaround: walk the class's methods to find get_PacketId (returns int,
-            // 0 params, instance). HttpApiSchema<TReq,TResp> defines get_PacketId
-            // on TResp, so it's inherited via the generic. In il2cpp, the Command
-            // type itself (or its base) should expose get_PacketId as a virtual
-            // method. We instantiate *the Command class itself* and invoke
-            // get_PacketId on it.
-            il2cpp::Il2CppMethod* pid = nullptr;
-            void* it = nullptr;
-            while (auto* m = il2cpp::class_get_methods(klass, &it)) {
-                if (il2cpp::method_get_param_count(m) != 0) continue;
-                if (!il2cpp::method_is_instance(m)) continue;
-                if (strcmp(il2cpp::method_get_name(m), "get_PacketId") == 0) { pid = m; break; }
+            if (!build_api_path(klass, api_path)) {
+                if (schema_count <= 3) MYO_LOG("request", "build_api_path failed for {}", kn);
+                continue;
             }
-            if (!pid) continue;
-            il2cpp::Il2CppObject* inst = static_cast<il2cpp::Il2CppObject*>(il2cpp::object_new(klass));
-            if (!inst) continue;
-            il2cpp::runtime_class_init(klass);
+            if (schema_count <= 3) MYO_LOG("request", "api_path for {} = {}", kn, api_path);
+
+            // C# uses type.BaseType.GenericTypeArguments[1] (TResp) and
+            // invokes get_PacketId on an instance of TResp. We resolve TResp
+            // by reading the parent's Il2CppType generic_class metadata.
+            // Il2CppType layout: {type bitfield @0, data union @8}.
+            // For GENERICINST (0x21), data.generic_class -> Il2CppGenericClass:
+            //   type @0, context.class_inst @8.
+            // Il2CppGenericInst: { type_argc @0, type_argv @8 }.
+            il2cpp::Il2CppClass* resp_class = nullptr;
+            il2cpp::Il2CppClass* parent = il2cpp::class_get_parent(klass);
+            if (parent) {
+                il2cpp::Il2CppType* parent_type = il2cpp::class_get_type(parent);
+                if (parent_type) {
+                    void* generic_class = *reinterpret_cast<void**>(
+                        reinterpret_cast<uintptr_t>(parent_type));
+                    if (generic_class) {
+                        // context.class_inst is at offset 8
+                        void* class_inst = *reinterpret_cast<void**>(
+                            reinterpret_cast<uintptr_t>(generic_class) + 8);
+                        if (class_inst) {
+                            // type_argc @0, type_argv @8
+                            uint32_t argc = *reinterpret_cast<uint32_t*>(class_inst);
+                            void** argv = reinterpret_cast<void**>(
+                                *reinterpret_cast<uintptr_t*>(
+                                    reinterpret_cast<uintptr_t>(class_inst) + 8));
+                            if (argc >= 2 && argv) {
+                                il2cpp::Il2CppType* resp_type =
+                                    static_cast<il2cpp::Il2CppType*>(argv[1]);
+                                resp_class = il2cpp::class_from_type(resp_type);
+                            }
+                        }
+                    }
+                }
+            }
+            if (!resp_class) {
+                if (schema_count <= 3) MYO_LOG("request", "could not resolve TResp for {}", kn);
+                continue;
+            }
+            if (schema_count <= 3) MYO_LOG("request", "TResp for {} = {}", kn, il2cpp::class_get_name(resp_class));
+
+            // Find get_PacketId on the response type (TResp).
+            il2cpp::Il2CppMethod* pid = nullptr;
+            for (il2cpp::Il2CppClass* rc = resp_class; rc && !pid; rc = il2cpp::class_get_parent(rc)) {
+                void* iter2 = nullptr;
+                while (auto* m = il2cpp::class_get_methods(rc, &iter2)) {
+                    if (il2cpp::method_get_param_count(m) != 0) continue;
+                    if (!il2cpp::method_is_instance(m)) continue;
+                    if (strcmp(il2cpp::method_get_name(m), "get_PacketId") == 0) { pid = m; break; }
+                }
+            }
+            if (!pid) {
+                if (schema_count <= 3) MYO_LOG("request", "get_PacketId not found on TResp {} for {}", il2cpp::class_get_name(resp_class), kn);
+                continue;
+            }
+            il2cpp::Il2CppObject* inst = static_cast<il2cpp::Il2CppObject*>(il2cpp::object_new(resp_class));
+            if (!inst) {
+                if (schema_count <= 3) MYO_LOG("request", "object_new failed for {}", kn);
+                continue;
+            }
+            il2cpp::runtime_class_init(resp_class);
             int64_t pid_val = invoke_int_method(inst, pid);
-            if (pid_val < 0) continue;
+            if (pid_val < 0) {
+                if (schema_count <= 3) MYO_LOG("request", "get_PacketId invoke failed for {} (val={})", kn, pid_val);
+                continue;
+            }
             g_packet_ids[api_path] = pid_val;
             MYO_LOG("request", "packetId[{}] = {}", api_path, pid_val);
         }
     }
-    MYO_LOG("request", "packet-id map size: {}", g_packet_ids.size());
-    (void)schema_base;
+    MYO_LOG("request", "packet-id map size: {} (cmds={}, schemas={})",
+             g_packet_ids.size(), cmd_count, schema_count);
 }
 
 // --- AddRequest hook.
@@ -296,6 +359,7 @@ size_t find_response_event_off(il2cpp::Il2CppClass* klass) {
 }
 
 extern "C" void __cdecl myosotis_add_request(il2cpp::Il2CppObject* self, il2cpp::Il2CppObject* schema) {
+    MYO_LOG("request", "AddRequest hook FIRED (self={} schema={})", static_cast<void*>(self), static_cast<void*>(schema));
     (void)self;  // HttpApiRequester instance; we don't need it for the POST.
     if (!schema) return;
     il2cpp::Il2CppClass* klass = il2cpp::find_class("Server", "HttpApiSchema");
@@ -375,28 +439,52 @@ extern "C" void __cdecl myosotis_add_request(il2cpp::Il2CppObject* self, il2cpp:
     il2cpp::runtime_invoke(g_invoke_on_event, evt, args, &exc);
 }
 
-void install_one(const char* ns, const char* klass, const char* method,
-                 int argc, void* stub) {
-    il2cpp::Il2CppClass* k = il2cpp::find_class(ns, klass);
-    if (!k) { MYO_LOG("request", "class {}.{} not found", ns, klass); return; }
-    il2cpp::Il2CppMethod* m = il2cpp::class_get_method_from_name(k, method, argc);
-    if (!m) { MYO_LOG("request", "method {}.{} /{} not found", klass, method, argc); return; }
-    void** slot = reinterpret_cast<void**>(m);
-    DWORD op = 0;
-    if (VirtualProtect(slot, sizeof(void*), PAGE_READWRITE, &op)) {
-        *slot = stub;
-        DWORD d = 0; VirtualProtect(slot, sizeof(void*), op, &d);
-        MYO_LOG("request", "hooked {}.{} /{}", klass, method, argc);
+// Log every method named `method` on `klass` (all overloads), so we can see
+// which arg counts exist. This is diagnostic only.
+void log_method_overloads(il2cpp::Il2CppClass* k, const char* method) {
+    void* iter = nullptr;
+    while (auto* m = il2cpp::class_get_methods(k, &iter)) {
+        const char* nm = il2cpp::method_get_name(m);
+        if (!nm || strcmp(nm, method) != 0) continue;
+        MYO_LOG("request", "  {} /{} params instance={}",
+                nm, il2cpp::method_get_param_count(m),
+                il2cpp::method_is_instance(m) ? 1 : 0);
     }
 }
 
-}  // namespace
+void install_one(const char* ns, const char* klass, const char* method,
+                 void* stub) {
+    il2cpp::Il2CppClass* k = il2cpp::find_class(ns, klass);
+    if (!k) { MYO_LOG("request", "class {}.{} not found", ns, klass); return; }
+    // Dump every overload so we can see what the runtime exposes.
+    MYO_LOG("request", "overloads of {}.{}:", klass, method);
+    log_method_overloads(k, method);
+    // Hook EVERY method with this name (all overloads) — we don't know which
+    // the game calls, and methodPointer overwrite on the wrong overload is
+    // harmless (the game just doesn't hit it). Hooking all is safest.
+    int hooked = 0;
+    void* iter = nullptr;
+    while (auto* m = il2cpp::class_get_methods(k, &iter)) {
+        const char* nm = il2cpp::method_get_name(m);
+        if (!nm || strcmp(nm, method) != 0) continue;
+        // Use inline hook (patches native code body) since methodPointer
+        // overwrite alone doesn't intercept direct managed-to-managed calls.
+        void* old = myosotis::hook::install_inline(m, stub);
+        if (old) {
+            MYO_LOG("request", "hooked {}.{} /{}", klass, method, il2cpp::method_get_param_count(m));
+            ++hooked;
+        }
+    }
+    if (hooked == 0) MYO_LOG("request", "no overloads of {}.{} found to hook", klass, method);
+}
+}  // namespace (anonymous)
 
 bool install_request() {
     build_packet_id_map();
-    install_one("HttpApiRequester", "HttpApiRequester", "AddRequest", 1,
+    install_one("Server", "HttpApiRequester", "AddRequest",
                 reinterpret_cast<void*>(&myosotis_add_request));
     return true;
 }
+
 
 }  // namespace myosotis::patches

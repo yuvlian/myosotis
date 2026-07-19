@@ -62,6 +62,10 @@ bool init() {
     (void)fn("il2cpp_class_get_method_from_name");
     (void)fn("il2cpp_class_get_fields");
     (void)fn("il2cpp_class_instance_size");
+    (void)fn("il2cpp_class_get_type");
+    (void)fn("il2cpp_class_from_type");
+    (void)fn("il2cpp_class_is_generic");
+    (void)fn("il2cpp_class_get_element_class");
     (void)fn("il2cpp_method_get_name");
     (void)fn("il2cpp_method_get_return_type");
     (void)fn("il2cpp_method_get_param_count");
@@ -81,12 +85,17 @@ bool init() {
 
 Il2CppDomain* domain_get() {
     using Sig = Il2CppDomain* (*)();
-    return fn_t<Sig>("il2cpp_domain_get")();
+    auto p = fn_t<Sig>("il2cpp_domain_get");
+    return p ? p() : nullptr;
 }
 
 Il2CppAssembly** domain_get_assemblies(size_t* out_count) {
+    if (out_count) *out_count = 0;
     using Sig = Il2CppAssembly** (*)(Il2CppDomain*, size_t*);
-    return fn_t<Sig>("il2cpp_domain_get_assemblies")(domain_get(), out_count);
+    auto p = fn_t<Sig>("il2cpp_domain_get_assemblies");
+    if (!p) return nullptr;
+    auto* d = domain_get();
+    return d ? p(d, out_count) : nullptr;
 }
 
 Il2CppImage* assembly_get_image(Il2CppAssembly* a) {
@@ -145,6 +154,22 @@ Il2CppField* class_get_fields(Il2CppClass* klass, void** iter) {
 int32_t class_instance_size(Il2CppClass* klass) {
     using Sig = int32_t (*)(Il2CppClass*);
     return fn_t<Sig>("il2cpp_class_instance_size")(klass);
+}
+Il2CppType* class_get_type(Il2CppClass* klass) {
+    using Sig = Il2CppType* (*)(Il2CppClass*);
+    return fn_t<Sig>("il2cpp_class_get_type")(klass);
+}
+Il2CppClass* class_from_type(Il2CppType* t) {
+    using Sig = Il2CppClass* (*)(Il2CppType*);
+    return fn_t<Sig>("il2cpp_class_from_type")(t);
+}
+bool class_is_generic(Il2CppClass* klass) {
+    using Sig = bool (*)(Il2CppClass*);
+    return fn_t<Sig>("il2cpp_class_is_generic")(klass);
+}
+Il2CppClass* class_get_element_class(Il2CppClass* klass) {
+    using Sig = Il2CppClass* (*)(Il2CppClass*);
+    return fn_t<Sig>("il2cpp_class_get_element_class")(klass);
 }
 
 const char* method_get_name(Il2CppMethod* m) {
@@ -233,11 +258,41 @@ Il2CppClass* find_class(const char* ns, const char* name) {
     size_t count = 0;
     Il2CppAssembly** asms = domain_get_assemblies(&count);
     if (!asms) return nullptr;
+
+    // Try the provided namespace, then empty namespace (many game classes live
+    // in the global namespace). il2cpp_class_from_name is the fast path.
+    const char* namespaces[] = { ns, "" };
+    for (const char* try_ns : namespaces) {
+        for (size_t i = 0; i < count; ++i) {
+            Il2CppImage* img = assembly_get_image(asms[i]);
+            if (!img) continue;
+            Il2CppClass* k = class_from_name(img, try_ns, name);
+            if (k) {
+                if (try_ns != ns)
+                    MYO_LOG("il2cpp", "found {}.{} in global namespace", ns, name);
+                return k;
+            }
+        }
+    }
+
+    // Fallback: full image×class scan comparing class_get_name. Slow but
+    // bulletproof — handles classes the fast path misses (wrong namespace,
+    // nested types, image quirks).
     for (size_t i = 0; i < count; ++i) {
         Il2CppImage* img = assembly_get_image(asms[i]);
         if (!img) continue;
-        Il2CppClass* k = class_from_name(img, ns, name);
-        if (k) return k;
+        size_t cn = image_get_class_count(img);
+        for (size_t c = 0; c < cn; ++c) {
+            Il2CppClass* k = image_get_class(img, c);
+            if (!k) continue;
+            const char* cn_name = class_get_name(k);
+            if (cn_name && strcmp(cn_name, name) == 0) {
+                const char* cn_ns = class_get_namespace(k);
+                MYO_LOG("il2cpp", "found {} in image[{}] via scan (ns=\"{}\")",
+                        name, i, cn_ns ? cn_ns : "");
+                return k;
+            }
+        }
     }
     return nullptr;
 }

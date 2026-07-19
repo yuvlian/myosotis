@@ -27,11 +27,14 @@ namespace myosotis::hook {
 // `new_ptr` is the replacement function. Its signature must match the il2cpp
 // calling convention: first arg is the instance (if instance method), followed
 // by the method's parameters, with an extra `MethodInfo*` trailing arg added
-// by il2cpp for some methods. In practice we don't need that trailing arg for
-// our hooks because our replacements don't call runtime_invoke on themselves.
-void* install(::myosotis::il2cpp::Il2CppMethod* method, void* new_ptr);
+// Install an inline hook: patches the native code at methodPointer with a
+// JMP to `new_ptr`. Use this when methodPointer overwrite alone doesn't
+// intercept calls (il2cpp managed-to-managed calls use baked-in direct
+// addresses, not MethodInfo->methodPointer indirection). Also overwrites
+// methodPointer for runtime_invoke paths. No trampoline — our hooks are
+// prefix-only and don't call the original.
+void* install_inline(::myosotis::il2cpp::Il2CppMethod* method, void* new_ptr);
 
-// Uninstall (restore original). `original` is the value returned by install().
-void uninstall(::myosotis::il2cpp::Il2CppMethod* method, void* original);
+ // Uninstall (restore original). `original` is the value returned by install().
 
 }  // namespace myosotis::hook

@@ -1,6 +1,7 @@
 // Http patch implementation.
 #include "patches/http.hpp"
 #include <windows.h>
+#include "hook.hpp"
 #include "il2cpp.hpp"
 #include "config.hpp"
 #include "log.hpp"
@@ -10,6 +11,15 @@
 namespace myosotis::patches {
 
 namespace {
+
+// Globals for hook trampolines and saved method info.
+il2cpp::Il2CppMethod* g_post_method = nullptr;
+void* g_post_original = nullptr;
+void* g_send_original = nullptr;
+il2cpp::Il2CppMethod* g_send_method = nullptr;
+using Send_t = il2cpp::Il2CppObject* (*)(il2cpp::Il2CppObject* self, il2cpp::Il2CppMethod* method_info);
+using Post_t = il2cpp::Il2CppObject* (*)(il2cpp::Il2CppString* uri, il2cpp::Il2CppString* body,
+                                          il2cpp::Il2CppMethod* method_info);
 
 std::string narrow(const std::wstring& w) {
     if (w.empty()) return {};
@@ -81,43 +91,48 @@ std::string get_uwr_url(il2cpp::Il2CppObject* uwr) {
     return il2cpp::string_to_utf8(s);
 }
 
-extern "C" void __cdecl myosotis_pre_send(il2cpp::Il2CppObject* self) {
-    if (!self) return;
+extern "C" il2cpp::Il2CppObject* __cdecl myosotis_pre_send(il2cpp::Il2CppObject* self) {
+    if (self) MYO_LOG("http", "SendWebRequest FIRED url={}", get_uwr_url(self));
     std::string url = get_uwr_url(self);
-    if (url.empty()) return;
-    std::string host, scheme;
-    if (!url_host_scheme(url, scheme, host)) return;
-    std::string server = narrow(myosotis::config::g.server);
-    if (server.empty()) return;
-    if (host == "notice.limbuscompanyapi.com") {
-        set_uwr_url(self, url_replace_host_scheme(url, server));
-        return;
-    }
-    std::string path = url_path(url);
-    if (path.rfind("/serverinfos_", 0) == 0) {
-        size_t extra = path.find('/', strlen("/serverinfos_"));
-        if (extra == std::string::npos) {
-            std::string si = narrow(myosotis::config::g.serverinfos_url);
-            if (!si.empty()) set_uwr_url(self, si);
+    if (!url.empty()) {
+        std::string host, scheme;
+        if (url_host_scheme(url, scheme, host)) {
+            std::string server = narrow(myosotis::config::g.server);
+            if (!server.empty()) {
+                if (host == "notice.limbuscompanyapi.com") {
+                    set_uwr_url(self, url_replace_host_scheme(url, server));
+                }
+                std::string path = url_path(url);
+                if (path.rfind("/serverinfos_", 0) == 0) {
+                    size_t extra = path.find('/', strlen("/serverinfos_"));
+                    if (extra == std::string::npos) {
+                        std::string si = narrow(myosotis::config::g.serverinfos_url);
+                        if (!si.empty()) set_uwr_url(self, si);
+                    }
+                }
+            }
         }
     }
+    // Call the original SendWebRequest via the trampoline and return its result.
+    // SendWebRequest returns an IEnumerator (coroutine); the caller needs it.
+    if (g_send_original) {
+        auto orig = reinterpret_cast<Send_t>(g_send_original);
+        return orig(self, g_send_method);
+    }
+    return nullptr;
 }
 
-il2cpp::Il2CppMethod* g_post_method = nullptr;
-void* g_post_original = nullptr;
-
-using Post_t = il2cpp::Il2CppObject* (*)(il2cpp::Il2CppString* uri, il2cpp::Il2CppString* body,
-                                          il2cpp::Il2CppMethod* method_info);
 
 extern "C" il2cpp::Il2CppObject* __cdecl myosotis_post_prefix(il2cpp::Il2CppString* uri,
                                                             il2cpp::Il2CppString* body) {
+    MYO_LOG("http", "Post FIRED uri={}", uri ? il2cpp::string_to_utf8(uri) : std::string("<null>"));
     std::string s_uri = il2cpp::string_to_utf8(uri);
     std::string server = narrow(myosotis::config::g.server);
     std::string new_uri = server.empty() ? s_uri : url_replace_host_scheme(s_uri, server);
     il2cpp::Il2CppString* rewritten = il2cpp::string_new(new_uri.c_str());
     if (g_post_original) {
         auto orig = reinterpret_cast<Post_t>(g_post_original);
-        return orig(rewritten, body, g_post_method);
+        return orig(rewritten, body, nullptr);
     }
     return nullptr;
 }
@@ -128,15 +143,20 @@ void install_one(const char* ns, const char* klass, const char* method,
     if (!k) { MYO_LOG("http", "class {}.{} not found", ns, klass); return; }
     il2cpp::Il2CppMethod* m = il2cpp::class_get_method_from_name(k, method, argc);
     if (!m) { MYO_LOG("http", "method {}.{} /{} not found", klass, method, argc); return; }
-    void** slot = reinterpret_cast<void**>(m);
-    DWORD op = 0;
-    if (VirtualProtect(slot, sizeof(void*), PAGE_READWRITE, &op)) {
-        if (method == std::string("Post") && argc == 2) {
-            g_post_method = m;
-            g_post_original = *slot;
-        }
-        *slot = stub;
-        DWORD d = 0; VirtualProtect(slot, sizeof(void*), op, &d);
+    if (method == std::string("Post") && argc == 2) {
+        g_post_method = m;
+        // Read methodPointer (offset 0) before overwriting.
+        g_post_original = *reinterpret_cast<void**>(m);
+    }
+    if (method == std::string("SendWebRequest") && argc == 0) {
+        g_send_method = m;
+        g_send_original = *reinterpret_cast<void**>(m);
+    }
+    // Inline hook: patches native code body AND overwrites methodPointer.
+    void* old = myosotis::hook::install_inline(m, stub);
+    if (old) {
+        if (method == std::string("Post") && argc == 2) g_post_original = old;
+        if (method == std::string("SendWebRequest") && argc == 0) g_send_original = old;
         MYO_LOG("http", "hooked {}.{} /{}", klass, method, argc);
     }
 }

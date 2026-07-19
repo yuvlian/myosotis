@@ -4,6 +4,7 @@
 #include "il2cpp.hpp"
 #include "config.hpp"
 #include "log.hpp"
+#include "hook.hpp"
 #include <cstring>
 #include <string>
 #include <windows.h>
@@ -108,6 +109,7 @@ extern "C" void __cdecl myosotis_login_noop() {}
 // The C# version inspects the key string. We do the same by reading the key
 // argument (an il2cpp string).
 extern "C" int32_t __cdecl myosotis_playerprefs_getint(il2cpp::Il2CppString* key, int32_t def) {
+    MYO_LOG("login", "PlayerPrefs.GetInt FIRED key={}", key ? il2cpp::string_to_utf8(key) : std::string("<null>"));
     if (key) {
         std::string k = il2cpp::string_to_utf8(key);
         const char* needles[] = { "Account", "account", "Guest", "guest", "Login", "login" };
@@ -130,13 +132,10 @@ void install_one(const char* ns, const char* klass, const char* method, void* st
     if (!k) { MYO_LOG("login", "class {}.{} not found", ns, klass); return; }
     // Try common arg counts.
     il2cpp::Il2CppMethod* m = nullptr;
-    for (int argc = 0; argc <= 2 && !m; ++argc) m = il2cpp::class_get_method_from_name(k, method, argc);
+    for (int argc = 0; argc <= 2 && !m; ++argc)
+        m = il2cpp::class_get_method_from_name(k, method, argc);
     if (!m) { MYO_LOG("login", "method {}.{} not found", klass, method); return; }
-    void** slot = reinterpret_cast<void**>(m);
-    DWORD op = 0;
-    if (VirtualProtect(slot, sizeof(void*), PAGE_READWRITE, &op)) {
-        *slot = stub;
-        DWORD d = 0; VirtualProtect(slot, sizeof(void*), op, &d);
+    if (myosotis::hook::install_inline(m, stub)) {
         MYO_LOG("login", "hooked {}.{}", klass, method);
     }
 }

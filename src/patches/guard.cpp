@@ -3,7 +3,9 @@
 #include "patches/guard.hpp"
 #include "il2cpp.hpp"
 #include "log.hpp"
+#include "hook.hpp"
 #include <cstring>
+#include <initializer_list>
 
 namespace myosotis::patches {
 
@@ -16,8 +18,9 @@ namespace {
 // void-return stub: return nothing (rax is whatever; callers ignore it).
 extern "C" void __cdecl myosotis_stub_void() {}
 
-// bool-return stub: return false (0 in al).
-extern "C" bool __cdecl myosotis_stub_bool() { return false; }
+// bool-return stub: return true (1 in al) — matches C# BoolStub which returns
+// true so anti-cheat integrity checks pass.
+extern "C" bool __cdecl myosotis_stub_bool() { return true; }
 
 // string-return stub: return an empty il2cpp string. We can't easily allocate
 // one without a thread-attached il2cpp context here (stubs may run on arbitrary
@@ -59,18 +62,9 @@ int install_on_class(il2cpp::Il2CppClass* klass) {
         if (strstr(name, "Invoke")) continue;
 
         void* new_ptr = stub_for_return_type(il2cpp::method_get_return_type(m));
-        // Overwrite MethodInfo->methodPointer (offset 0).
-        // We don't bother with VirtualProtect here: the guard-patch overwrites
-        // many methods and the metadata pages are generally writable via the
-        // same VirtualProtect dance in hook.cpp. Reuse that path via the hook API.
-        void** slot = reinterpret_cast<void**>(m);
-        DWORD old_prot = 0;
-        if (VirtualProtect(slot, sizeof(void*), PAGE_READWRITE, &old_prot)) {
-            *slot = new_ptr;
-            DWORD dummy = 0;
-            VirtualProtect(slot, sizeof(void*), old_prot, &dummy);
-            ++n;
-        }
+        // Inline hook: patch native code body AND methodPointer, so both
+        // direct managed calls and runtime_invoke paths are intercepted.
+        if (myosotis::hook::install_inline(m, new_ptr)) ++n;
     }
     return n;
 }
@@ -82,13 +76,17 @@ bool install_guard() {
     size_t count = 0;
     il2cpp::Il2CppAssembly** asms = il2cpp::domain_get_assemblies(&count);
     if (!asms) { MYO_LOG("guard", "no assemblies"); return false; }
+    MYO_LOG("guard", "assembly count: {}", count);
 
     int total = 0;
     for (size_t i = 0; i < count; ++i) {
         il2cpp::Il2CppImage* img = il2cpp::assembly_get_image(asms[i]);
         if (!img) continue;
         const char* name = il2cpp::image_get_name(img);
-        if (!name || !strstr(name, "JsonExtensions")) continue;
+        if (!name) continue;
+        // Log every image name so we can see what the runtime actually exposes.
+        MYO_LOG("guard", "image[{}]: {}", i, name);
+        if (!strstr(name, "JsonExtensions")) continue;
         MYO_LOG("guard", "found image: {}", name);
 
         size_t cn = il2cpp::image_get_class_count(img);
@@ -100,24 +98,30 @@ bool install_guard() {
 
     // Patch Environment.Exit / Application.Quit / Environment.FailFast by
     // name on their declaring classes. These live in mscorlib / UnityEngine.Core.
-    auto stub_by_name = [](const char* ns, const char* klass, const char* method, void* stub) {
+    // Patch by name, trying multiple arg counts (overloads). The C# GuardPatch
+    // hooks: Environment.Exit(int), Application.Quit(), Application.Quit(int),
+    // Environment.FailFast(string), Environment.FailFast(string, Exception).
+    auto stub_by_name = [](const char* ns, const char* klass, const char* method,
+                           void* stub, std::initializer_list<int> argcs) {
         il2cpp::Il2CppClass* k = il2cpp::find_class(ns, klass);
         if (!k) { MYO_LOG("guard", "class {}.{} not found", ns, klass); return; }
-        il2cpp::Il2CppMethod* m = il2cpp::class_get_method_from_name(k, method, 1);
-        if (!m) m = il2cpp::class_get_method_from_name(k, method, 0);
-        if (!m) { MYO_LOG("guard", "method {}.{} not found", klass, method); return; }
-        void** slot = reinterpret_cast<void**>(m);
-        DWORD op = 0;
-        if (VirtualProtect(slot, sizeof(void*), PAGE_READWRITE, &op)) {
-            *slot = stub;
-            DWORD d = 0; VirtualProtect(slot, sizeof(void*), op, &d);
-            MYO_LOG("guard", "stubbed {}.{}", klass, method);
+        int installed = 0;
+        for (int argc : argcs) {
+            il2cpp::Il2CppMethod* m = il2cpp::class_get_method_from_name(k, method, argc);
+            if (!m) continue;
+            // Inline hook: patches native code body AND methodPointer.
+            if (myosotis::hook::install_inline(m, stub)) {
+                MYO_LOG("guard", "stubbed {}.{} /{}", klass, method, argc);
+                ++installed;
+            }
         }
+        if (installed == 0) MYO_LOG("guard", "method {}.{} not found", klass, method);
     };
 
-    stub_by_name("System", "Environment", "Exit", reinterpret_cast<void*>(&myosotis_stub_void));
-    stub_by_name("UnityEngine", "Application", "Quit", reinterpret_cast<void*>(&myosotis_stub_void));
-    stub_by_name("System", "Environment", "FailFast", reinterpret_cast<void*>(&myosotis_stub_void));
+    stub_by_name("System", "Environment", "Exit", reinterpret_cast<void*>(&myosotis_stub_void), {1});
+    stub_by_name("UnityEngine", "Application", "Quit", reinterpret_cast<void*>(&myosotis_stub_void), {0, 1});
+    stub_by_name("System", "Environment", "FailFast", reinterpret_cast<void*>(&myosotis_stub_void), {1, 2});
+
 
     return true;
 }
