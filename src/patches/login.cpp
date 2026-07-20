@@ -21,7 +21,7 @@ size_t find_field_offset(il2cpp::Il2CppClass* klass, const char* name) {
             if (fn && strcmp(fn, name) == 0) {
                 size_t off = il2cpp::field_get_offset(f);
                 const char* ns = il2cpp::class_get_namespace(k);
-                MYO_LOG("login", "field {} at offset 0x{:x} on {}.{}", name, off, ns ? ns : "", il2cpp::class_get_name(k));
+                MYO_LOG_DEBUG("login", "field {} at offset 0x{:x} on {}.{}", name, off, ns ? ns : "", il2cpp::class_get_name(k));
                 return off;
             }
         }
@@ -119,7 +119,7 @@ extern "C" void __cdecl myosotis_login_noop() {}
 // The C# version inspects the key string. We do the same by reading the key
 // argument (an il2cpp string).
 extern "C" int32_t __cdecl myosotis_playerprefs_getint(il2cpp::Il2CppString* key, int32_t def) {
-    MYO_LOG("login", "PlayerPrefs.GetInt FIRED key={}", key ? il2cpp::string_to_utf8(key) : std::string("<null>"));
+    MYO_LOG_DEBUG("login", "PlayerPrefs.GetInt FIRED key={}", key ? il2cpp::string_to_utf8(key) : std::string("<null>"));
     if (key) {
         std::string k = il2cpp::string_to_utf8(key);
         const char* needles[] = { "Account", "account", "Guest", "guest", "Login", "login" };

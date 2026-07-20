@@ -250,7 +250,7 @@ void* install_inline(::myosotis::il2cpp::Il2CppMethod* method, void* new_ptr) {
     if (copied < patch_size) {
         // Can't build a safe trampoline — don't inline-patch. methodPointer
         // was already overwritten, so runtime_invoke paths are still hooked.
-        MYO_LOG("hook", "inline hook skipped (only {} bytes decoded, need {}): {}",
+        MYO_LOG_DEBUG("hook", "inline hook skipped (only {} bytes decoded, need {}): {}",
                 copied, patch_size, static_cast<void*>(method));
         return old_method_ptr;
     }
@@ -292,7 +292,7 @@ void* install_inline(::myosotis::il2cpp::Il2CppMethod* method, void* new_ptr) {
     DWORD dummy = 0;
     VirtualProtect(old_method_ptr, patch_size, old_prot, &dummy);
     FlushInstructionCache(GetCurrentProcess(), old_method_ptr, patch_size);
-    MYO_LOG("hook", "inline hooked {} at {} -> {} ({}-byte patch, trampoline={}, copied={})",
+    MYO_LOG_DEBUG("hook", "inline hooked {} at {} -> {} ({}-byte patch, trampoline={}, copied={})",
              static_cast<void*>(method), old_method_ptr, new_ptr,
              patch_size, static_cast<void*>(tramp), copied);
     return tramp;

@@ -108,7 +108,7 @@ and the full strict warning set (`-Wall -Wextra -Wpedantic -Wconversion
    token=<your hardcoded steam JWT>
    server=http://127.0.0.1:3000/
    serverinfos_url=https://raw.githubusercontent.com/LEAGUE-OF-NINE/motions-schema/refs/heads/main/serverinfos.json
-   log_level=1
+   log_level=1      ; 0=quiet, 1=info (default), 2=debug (verbose per-call logs)
    ```
 
    The first run creates a default `myosotis.ini` with these keys if none exists.
@@ -147,7 +147,7 @@ python cpp\tools\regen_map.py --game-dir "C:\Program Files (x86)\Steam\steamapps
 
 ```
 cpp/
-  include/            hand-written public headers (mirrors src/ layout)
+  include/            hand-written public headers (flat, with patches/ subdir)
     patches/          patch public interfaces
   generated/         (gitignored) regen_map.py output — embedded fallback map
   src/                DLL sources

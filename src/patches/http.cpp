@@ -84,14 +84,14 @@ void set_uwr_header(il2cpp::Il2CppObject* uwr, const std::string& name, const st
         if (!k) return;
         setter = il2cpp::class_get_method_from_name(k, "SetRequestHeader", 2);
         if (!setter) { MYO_LOG("http", "SetRequestHeader /2 not found"); return; }
-        MYO_LOG("http", "found SetRequestHeader /2");
+        MYO_LOG_DEBUG("http", "found SetRequestHeader /2");
     }
     il2cpp::Il2CppString* sn = il2cpp::string_new(name.c_str());
     il2cpp::Il2CppString* sv = il2cpp::string_new(value.c_str());
     void* args[2] = { sn, sv };
     void* exc = nullptr;
     il2cpp::runtime_invoke(setter, uwr, args, &exc);
-    MYO_LOG("http", "SetRequestHeader {}={} (exc={})", name, value, exc ? static_cast<void*>(exc) : nullptr);
+    MYO_LOG_DEBUG("http", "SetRequestHeader {}={} (exc={})", name, value, exc ? static_cast<void*>(exc) : nullptr);
 }
 
 std::string get_uwr_url(il2cpp::Il2CppObject* uwr) {
@@ -109,7 +109,7 @@ std::string get_uwr_url(il2cpp::Il2CppObject* uwr) {
 }
 
 extern "C" il2cpp::Il2CppObject* __cdecl myosotis_pre_send(il2cpp::Il2CppObject* self) {
-    if (self) MYO_LOG("http", "SendWebRequest FIRED url={}", get_uwr_url(self));
+    if (self) MYO_LOG_DEBUG("http", "SendWebRequest FIRED url={}", get_uwr_url(self));
     std::string url = get_uwr_url(self);
     if (!url.empty()) {
         std::string host, scheme;
@@ -126,7 +126,7 @@ extern "C" il2cpp::Il2CppObject* __cdecl myosotis_pre_send(il2cpp::Il2CppObject*
                         std::string si = narrow(myosotis::config::g.serverinfos_url);
                         if (!si.empty()) {
                             // Preserve the original URL so the redirect target
-                            MYO_LOG("http", "serverinfos redirect: {} -> {} (header X-Original-Url={})", url, si, url);
+                            MYO_LOG_DEBUG("http", "serverinfos redirect: {} -> {} (header X-Original-Url={})", url, si, url);
                             set_uwr_header(self, "X-Original-Url", url);
                             set_uwr_url(self, si);
                         }
@@ -147,7 +147,7 @@ extern "C" il2cpp::Il2CppObject* __cdecl myosotis_pre_send(il2cpp::Il2CppObject*
 
 extern "C" il2cpp::Il2CppObject* __cdecl myosotis_post_prefix(il2cpp::Il2CppString* uri,
                                                             il2cpp::Il2CppString* body) {
-    MYO_LOG("http", "Post FIRED uri={}", uri ? il2cpp::string_to_utf8(uri) : std::string("<null>"));
+    MYO_LOG_DEBUG("http", "Post FIRED uri={}", uri ? il2cpp::string_to_utf8(uri) : std::string("<null>"));
     std::string s_uri = il2cpp::string_to_utf8(uri);
     std::string server = narrow(myosotis::config::g.server);
     std::string new_uri = server.empty() ? s_uri : url_replace_host_scheme(s_uri, server);

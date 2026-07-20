@@ -5,6 +5,7 @@
 // line to myosotis.log next to the DLL, so a failed init leaves a visible trail.
 
 #include "log.hpp"
+#include "config.hpp"
 #include <windows.h>
 #include <string>
 #include <string_view>
@@ -12,6 +13,7 @@
 
 namespace myosotis {
 
+int g_log_level = 1;  // default: info
 namespace {
 
 // Path of the log file (DLL dir + "myosotis.log"). Cached after first use.
@@ -84,8 +86,9 @@ void write_console(const std::string& line) {
 }
 
 }  // namespace
-
 void log_init() {
+    // Read log_level from config before anything else.
+    g_log_level = myosotis::config::g.log_level;
     alloc_console();
     OutputDebugStringW(L"[Myosotis] logging via OutputDebugStringW + myosotis.log + console\n");
     // Truncate the log on each fresh load so you don't see stale output.

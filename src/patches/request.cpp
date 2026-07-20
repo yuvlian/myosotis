@@ -124,11 +124,11 @@ bool build_api_path(il2cpp::Il2CppClass* klass, std::string& out) {
     static bool dumped = false;
     if (!dumped) {
         dumped = true;
-        MYO_LOG("request", "=== method dump for {} (parent chain) ===", il2cpp::class_get_name(klass));
+        MYO_LOG_DEBUG("request", "=== method dump for {} (parent chain) ===", il2cpp::class_get_name(klass));
         for (il2cpp::Il2CppClass* k = klass; k; k = il2cpp::class_get_parent(k)) {
             const char* kn = il2cpp::class_get_name(k);
             if (!kn) break;
-            MYO_LOG("request", "  class {}", kn);
+            MYO_LOG_DEBUG("request", "  class {}", kn);
             void* it = nullptr;
             while (auto* m = il2cpp::class_get_methods(k, &it)) {
                 if (il2cpp::method_get_param_count(m) != 0) continue;
@@ -137,7 +137,7 @@ bool build_api_path(il2cpp::Il2CppClass* klass, std::string& out) {
                 int tk = rt ? il2cpp::type_get_type(rt) : -1;
                 il2cpp::Il2CppClass* rc = rt ? il2cpp::type_get_class_or_element_class(rt) : nullptr;
                 bool isenum = rc && il2cpp::class_is_enum(rc);
-                MYO_LOG("request", "    {} ret_type=0x{:x} is_enum={}",
+                MYO_LOG_DEBUG("request", "    {} ret_type=0x{:x} is_enum={}",
                          il2cpp::method_get_name(m), tk, isenum ? 1 : 0);
             }
             if (strcmp(kn, "Object") == 0) break;
@@ -145,7 +145,7 @@ bool build_api_path(il2cpp::Il2CppClass* klass, std::string& out) {
     }
 
     if (!m_str || !m_enum) {
-        MYO_LOG("request", "build_api_path: {} missing m_str={} m_enum={}",
+        MYO_LOG_DEBUG("request", "build_api_path: {} missing m_str={} m_enum={}",
                  il2cpp::class_get_name(klass),
                  m_str ? il2cpp::method_get_name(m_str) : "<null>",
                  m_enum ? il2cpp::method_get_name(m_enum) : "<null>");
@@ -183,7 +183,7 @@ bool build_api_path(il2cpp::Il2CppClass* klass, std::string& out) {
     std::string full = "/" + lower_enum + (path.empty() ? std::string() :
                        (path[0] == '/' ? path : std::string("/") + path));
     out = full;
-    MYO_LOG("request", "api_path for {} = {} (enum={})", il2cpp::class_get_name(klass), out, enum_name);
+    MYO_LOG_DEBUG("request", "api_path for {} = {} (enum={})", il2cpp::class_get_name(klass), out, enum_name);
     return !out.empty();
 }
 
@@ -221,7 +221,7 @@ void build_packet_id_map() {
             if (p) {
                 const char* pn = il2cpp::class_get_name(p);
                 if (cmd_count <= 5)
-                    MYO_LOG("request", "cmd {} {}: parent = {}", cmd_count, kn, pn ? pn : "<null>");
+                    MYO_LOG_DEBUG("request", "cmd {} {}: parent = {}", cmd_count, kn, pn ? pn : "<null>");
                 // Constructed generic with arity 2: name ends with "`2".
                 if (pn) {
                     size_t pnl = strlen(pn);
@@ -236,10 +236,10 @@ void build_packet_id_map() {
             // Build apiPath.
             std::string api_path;
             if (!build_api_path(klass, api_path)) {
-                if (schema_count <= 3) MYO_LOG("request", "build_api_path failed for {}", kn);
+                if (schema_count <= 3) MYO_LOG_DEBUG("request", "build_api_path failed for {}", kn);
                 continue;
             }
-            if (schema_count <= 3) MYO_LOG("request", "api_path for {} = {}", kn, api_path);
+            if (schema_count <= 3) MYO_LOG_DEBUG("request", "api_path for {} = {}", kn, api_path);
 
             // C# uses type.BaseType.GenericTypeArguments[1] (TResp) and
             // invokes get_PacketId on an instance of TResp. We resolve TResp
@@ -275,10 +275,10 @@ void build_packet_id_map() {
                 }
             }
             if (!resp_class) {
-                if (schema_count <= 3) MYO_LOG("request", "could not resolve TResp for {}", kn);
+                if (schema_count <= 3) MYO_LOG_DEBUG("request", "could not resolve TResp for {}", kn);
                 continue;
             }
-            if (schema_count <= 3) MYO_LOG("request", "TResp for {} = {}", kn, il2cpp::class_get_name(resp_class));
+            if (schema_count <= 3) MYO_LOG_DEBUG("request", "TResp for {} = {}", kn, il2cpp::class_get_name(resp_class));
 
             // Find get_PacketId on the response type (TResp).
             il2cpp::Il2CppMethod* pid = nullptr;
@@ -291,22 +291,22 @@ void build_packet_id_map() {
                 }
             }
             if (!pid) {
-                if (schema_count <= 3) MYO_LOG("request", "get_PacketId not found on TResp {} for {}", il2cpp::class_get_name(resp_class), kn);
+                if (schema_count <= 3) MYO_LOG_DEBUG("request", "get_PacketId not found on TResp {} for {}", il2cpp::class_get_name(resp_class), kn);
                 continue;
             }
             il2cpp::Il2CppObject* inst = static_cast<il2cpp::Il2CppObject*>(il2cpp::object_new(resp_class));
             if (!inst) {
-                if (schema_count <= 3) MYO_LOG("request", "object_new failed for {}", kn);
+                if (schema_count <= 3) MYO_LOG_DEBUG("request", "object_new failed for {}", kn);
                 continue;
             }
             il2cpp::runtime_class_init(resp_class);
             int64_t pid_val = invoke_int_method(inst, pid);
             if (pid_val < 0) {
-                if (schema_count <= 3) MYO_LOG("request", "get_PacketId invoke failed for {} (val={})", kn, pid_val);
+                if (schema_count <= 3) MYO_LOG_DEBUG("request", "get_PacketId invoke failed for {} (val={})", kn, pid_val);
                 continue;
             }
             g_packet_ids[api_path] = pid_val;
-            MYO_LOG("request", "packetId[{}] = {}", api_path, pid_val);
+            MYO_LOG_DEBUG("request", "packetId[{}] = {}", api_path, pid_val);
         }
     }
     MYO_LOG("request", "packet-id map size: {} (cmds={}, schemas={})",
@@ -365,19 +365,19 @@ size_t find_response_event_off(il2cpp::Il2CppClass* klass) {
             if (fname && strcmp(fname, "_responseEvent") == 0) {
                 g_response_event_off = il2cpp::field_get_offset(f);
                 const char* ns = il2cpp::class_get_namespace(k);
-                MYO_LOG("request", "found _responseEvent at offset 0x{:x} on {}.{}",
+                MYO_LOG_DEBUG("request", "found _responseEvent at offset 0x{:x} on {}.{}",
                         g_response_event_off, ns ? ns : "", il2cpp::class_get_name(k));
                 return g_response_event_off;
             }
         }
     }
-    MYO_LOG("request", "_responseEvent field not found on hierarchy; using 0x18 fallback");
+    MYO_LOG_DEBUG("request", "_responseEvent field not found on hierarchy; using 0x18 fallback");
     g_response_event_off = 0x18;
     return g_response_event_off;
 }
 
 extern "C" void __cdecl myosotis_add_request(il2cpp::Il2CppObject* self, il2cpp::Il2CppObject* schema) {
-    MYO_LOG("request", "AddRequest hook FIRED (self={} schema={})", static_cast<void*>(self), static_cast<void*>(schema));
+    MYO_LOG_DEBUG("request", "AddRequest hook FIRED (self={} schema={})", static_cast<void*>(self), static_cast<void*>(schema));
     (void)self;  // HttpApiRequester instance; we don't need it for the POST.
     if (!schema) return;
     il2cpp::Il2CppClass* klass = il2cpp::find_class("Server", "HttpApiSchema");
@@ -397,7 +397,7 @@ extern "C" void __cdecl myosotis_add_request(il2cpp::Il2CppObject* self, il2cpp:
     std::string url  = invoke_string_method(schema, sm.url);
     std::string body = invoke_string_method(schema, sm.body);
     if (url.empty() || body.empty()) {
-        MYO_LOG("request", "could not resolve url/body for schema {}", static_cast<void*>(schema));
+        MYO_LOG_ERROR("request", "could not resolve url/body for schema {}", static_cast<void*>(schema));
         return;
     }
 
@@ -427,20 +427,20 @@ extern "C" void __cdecl myosotis_add_request(il2cpp::Il2CppObject* self, il2cpp:
             }
         }
     }
-    MYO_LOG("request", "POST {} (path={} pid={} body_len={})", final_url, path, map_pid.empty() ? "none" : map_pid, body_out.size());
+    MYO_LOG_DEBUG("request", "POST {} (path={} pid={} body_len={})", final_url, path, map_pid.empty() ? "none" : map_pid, body_out.size());
 
     myosotis::http::Response r = myosotis::http::post(final_url, body_out, map_pid);
     if (r.status == 0) {
-        MYO_LOG("request", "POST {} failed: {}", final_url, r.error);
+        MYO_LOG_ERROR("request", "POST {} failed: {}", final_url, r.error);
         return;
     }
-    MYO_LOG("request", "response status={} body={}", r.status, r.body);
+    MYO_LOG_DEBUG("request", "response status={} body={}", r.status, r.body);
     std::string text = std::move(r.body);
 
     // Invoke schema._responseEvent.Invoke(text).
     size_t off = find_response_event_off(g_schema_class);
     void* evt = *reinterpret_cast<void**>(reinterpret_cast<uintptr_t>(schema) + off);
-    if (!evt) { MYO_LOG("request", "responseEvent is null at off 0x{:x}", off); return; }
+    if (!evt) { MYO_LOG_DEBUG("request", "responseEvent is null at off 0x{:x}", off); return; }
 
     // Resolve Invoke(string) on the actual runtime class of the event object.
     // Cache it — the event type is the same (DelegateEventString) for every
@@ -456,18 +456,18 @@ extern "C" void __cdecl myosotis_add_request(il2cpp::Il2CppObject* self, il2cpp:
                 if (mn && strcmp(mn, "Invoke") == 0 && pc == 1) {
                     invoke_method = m;
                     const char* ns = il2cpp::class_get_namespace(ue);
-                    MYO_LOG("request", "cached Invoke /1 on {}.{}", ns ? ns : "", il2cpp::class_get_name(ue));
+                    MYO_LOG_DEBUG("request", "cached Invoke /1 on {}.{}", ns ? ns : "", il2cpp::class_get_name(ue));
                     break;
                 }
             }
         }
     }
-    if (!invoke_method) { MYO_LOG("request", "UnityEvent.Invoke not resolved"); return; }
+    if (!invoke_method) { MYO_LOG_ERROR("request", "UnityEvent.Invoke not resolved"); return; }
     il2cpp::Il2CppString* s = il2cpp::string_new(text.c_str());
     void* args[1] = { s };
     void* exc = nullptr;
     il2cpp::runtime_invoke(invoke_method, evt, args, &exc);
-    if (exc) MYO_LOG("request", "_responseEvent.Invoke threw (exc={})", static_cast<void*>(exc));
+    if (exc) MYO_LOG_ERROR("request", "_responseEvent.Invoke threw (exc={})", static_cast<void*>(exc));
 }
 
 // Log every method named `method` on `klass` (all overloads), so we can see
@@ -477,7 +477,7 @@ void log_method_overloads(il2cpp::Il2CppClass* k, const char* method) {
     while (auto* m = il2cpp::class_get_methods(k, &iter)) {
         const char* nm = il2cpp::method_get_name(m);
         if (!nm || strcmp(nm, method) != 0) continue;
-        MYO_LOG("request", "  {} /{} params instance={}",
+        MYO_LOG_DEBUG("request", "  {} /{} params instance={}",
                 nm, il2cpp::method_get_param_count(m),
                 il2cpp::method_is_instance(m) ? 1 : 0);
     }
@@ -486,9 +486,9 @@ void log_method_overloads(il2cpp::Il2CppClass* k, const char* method) {
 void install_one(const char* ns, const char* klass, const char* method,
                  void* stub) {
     il2cpp::Il2CppClass* k = il2cpp::find_class(ns, klass);
-    if (!k) { MYO_LOG("request", "class {}.{} not found", ns, klass); return; }
+    if (!k) { MYO_LOG_DEBUG("request", "class {}.{} not found", ns, klass); return; }
     // Dump every overload so we can see what the runtime exposes.
-    MYO_LOG("request", "overloads of {}.{}:", klass, method);
+    MYO_LOG_DEBUG("request", "overloads of {}.{}:", klass, method);
     log_method_overloads(k, method);
     // Hook EVERY method with this name (all overloads) — we don't know which
     // the game calls, and methodPointer overwrite on the wrong overload is
@@ -506,7 +506,7 @@ void install_one(const char* ns, const char* klass, const char* method,
             ++hooked;
         }
     }
-    if (hooked == 0) MYO_LOG("request", "no overloads of {}.{} found to hook", klass, method);
+    if (hooked == 0) MYO_LOG_DEBUG("request", "no overloads of {}.{} found to hook", klass, method);
 }
 }  // namespace (anonymous)
 

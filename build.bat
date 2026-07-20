@@ -58,6 +58,7 @@ exit /b 0
 set TSRC=^
 tools\test_scan.cpp ^
 src\log.cpp ^
+src\config.cpp ^
 src\il2cpp\pe.cpp ^
 src\il2cpp\scan.cpp ^
 src\il2cpp\il2cpp_names.cpp
