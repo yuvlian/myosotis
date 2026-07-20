@@ -1,17 +1,17 @@
 @echo off
-REM Build myosotis.dll + loader + scan self-test with zig cc.
-REM No external deps; links Windows SDK libs only.
-REM Usage: build.bat          (builds all three)
-REM        build.bat dll      (DLL only)
-REM        build.bat loader   (loader only)
-REM        build.bat test      (scan self-test only)
+
+REM Usage: build.bat
+REM build.bat             build everything
+REM build.bat dll         build myosotis.dll only
+REM build.bat loader      build myoink.exe loader only
+REM build.bat test        build test_scan.exe only
+
 setlocal enabledelayedexpansion
 cd /d %~dp0
 
 set ZIG=zig
 if not exist build mkdir build
 
-REM Shared flags. Every flag in WARN is clang-accepted under zig cc (probed).
 set INC=-Iinclude -Igenerated
 set DEF=-DUNICODE -D_UNICODE
 set WARN=-Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wdouble-promotion -Wformat=2 -Wcast-align -Wnull-dereference -Wswitch-enum
@@ -24,7 +24,7 @@ if /i "%WHAT%"=="dll"    (call :build_dll    & goto :done)
 if /i "%WHAT%"=="loader" (call :build_loader & goto :done)
 if /i "%WHAT%"=="test"   (call :build_test   & goto :done)
 if /i "%WHAT%"=="all"    (call :build_dll & if errorlevel 1 goto :done) & (call :build_loader & if errorlevel 1 goto :done) & call :build_test & goto :done
-echo Unknown target: %WHAT%
+echo unknown target: %WHAT%
 exit /b 2
 
 :build_dll
@@ -45,13 +45,13 @@ src\patches\http.cpp ^
 src\patches\request.cpp
 %ZIG% c++ %OPT% -shared %SRC% -lwinhttp -lkernel32 -luser32 -lole32 -ladvapi32 -o build\myosotis.dll
 if errorlevel 1 ( echo DLL BUILD FAILED & exit /b 1 )
-echo Built build\myosotis.dll
+echo built build\myosotis.dll
 exit /b 0
 
 :build_loader
 %ZIG% c++ %OPT% -municode tools\loader.cpp -lkernel32 -o build\myoink.exe
 if errorlevel 1 ( echo LOADER BUILD FAILED & exit /b 1 )
-echo Built build\myoink.exe
+echo built build\myoink.exe
 exit /b 0
 
 :build_test
@@ -64,7 +64,7 @@ src\il2cpp\scan.cpp ^
 src\il2cpp\il2cpp_names.cpp
 %ZIG% c++ %OPT% %TSRC% -lkernel32 -luser32 -o build\test_scan.exe
 if errorlevel 1 ( echo TEST BUILD FAILED & exit /b 1 )
-echo Built build\test_scan.exe
+echo built build\test_scan.exe
 exit /b 0
 
 :done

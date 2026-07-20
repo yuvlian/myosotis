@@ -1,4 +1,4 @@
-# Build outputs
+# build output
 build/
 *.pdb
 *.lib
@@ -6,14 +6,14 @@ build/
 *.exp
 *.ilk
 
-# Generated il2cpp name map (reproducible via tools/regen_map.py)
+# @generated
 generated/
 
-# Python
+# python
 __pycache__/
 *.pyc
 
-# Editor / OS cruft
+# editor etc.
 .vs/
 .vscode/
 .idea/
