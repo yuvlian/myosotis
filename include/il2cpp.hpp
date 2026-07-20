@@ -55,11 +55,14 @@ const char*     class_get_name(Il2CppClass* klass);
 const char*     class_get_namespace(Il2CppClass* klass);
 Il2CppClass*    class_get_parent(Il2CppClass* klass);
 bool            class_is_enum(Il2CppClass* klass);
+bool            class_is_valuetype(Il2CppClass* klass);
+bool            class_is_interface(Il2CppClass* klass);
 Il2CppMethod*   class_get_methods(Il2CppClass* klass, void** iter);
 Il2CppMethod*   class_get_method_from_name(Il2CppClass* klass, const char* name, int args_count);
 Il2CppField*    class_get_fields(Il2CppClass* klass, void** iter);
 const char*     field_get_name(Il2CppField* field);
 size_t          field_get_offset(Il2CppField* field);
+Il2CppType*     field_get_type(Il2CppField* field);
 int32_t         class_instance_size(Il2CppClass* klass);
 Il2CppType*     class_get_type(Il2CppClass* klass);
 Il2CppClass*    class_from_type(Il2CppType* t);
@@ -72,6 +75,7 @@ uint32_t        method_get_param_count(Il2CppMethod* m);
 bool            method_is_instance(Il2CppMethod* m);
 
 int             type_get_type(Il2CppType* t);
+const char*     type_get_name(Il2CppType* t);
 Il2CppClass*    type_get_class_or_element_class(Il2CppType* t);
 
 void*           runtime_invoke(Il2CppMethod* m, void* obj, void** params, void** exc);

@@ -49,13 +49,16 @@ bool load() {
     if (GetFileAttributesW(ini.c_str()) == INVALID_FILE_ATTRIBUTES) {
         const wchar_t* def =
             L"[myosotis]\r\n"
-            L"; Hardcoded steam JWT used as the auth ticket (replaces browser login)\r\n"
-            L"token=\r\n"
-            L"; Server to redirect API requests to (must include scheme + trailing slash)\r\n"
-            L"server=https://api.lethelc.site/\r\n"
-            L"; URL to serve for /serverinfos_* requests\r\n"
-            L"serverinfos_url=https://raw.githubusercontent.com/LEAGUE-OF-NINE/motions-schema/refs/heads/main/serverinfos.json\r\n"
-            L"log_level=1\r\n";
+            L"; hardcoded steam token\r\n"
+            L"token=TOTALLYLEGITTOKEN\r\n"
+            L"; redirect target (must include scheme + trailing slash)\r\n"
+            L"server=http://127.0.0.1:3000/\r\n"
+            L"; redirect target for /serverinfos_* requests\r\n"
+            L"serverinfos_url=http://127.0.0.1:3000/serverinfos.json\r\n"
+            L"; 0 = only error logs, 1 = error & info, 2 = error & info & debug\r\n"
+            L"log_level=1\r\n"
+            L"; 0 = off, 1 = types, 2 = types + il2cpp (shitty)\r\n"
+            L"dump_level=1\r\n";
         HANDLE h = CreateFileW(ini.c_str(), GENERIC_WRITE, 0, nullptr,
                                CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (h != INVALID_HANDLE_VALUE) {
@@ -65,13 +68,23 @@ bool load() {
         }
     }
 
-    g.token           = read_ini(ini.c_str(), L"myosotis", L"token", L"");
-    g.server          = read_ini(ini.c_str(), L"myosotis", L"server", L"https://api.lethelc.site/");
+    g.token           = read_ini(ini.c_str(), L"myosotis", L"token", L"TOTALLYLEGITTOKEN");
+    g.server          = read_ini(ini.c_str(), L"myosotis", L"server", L"http://127.0.0.1:3000/");
     g.serverinfos_url = read_ini(ini.c_str(), L"myosotis", L"serverinfos_url",
-                                 L"https://raw.githubusercontent.com/LEAGUE-OF-NINE/motions-schema/refs/heads/main/serverinfos.json");
+                                 L"http://127.0.0.1:3000/serverinfos.json");
     g.log_level       = static_cast<int>(GetPrivateProfileIntW(L"myosotis", L"log_level", 1, ini.c_str()));
+    g.dump_level      = static_cast<int>(GetPrivateProfileIntW(L"myosotis", L"dump_level", 1, ini.c_str()));
 
-    MYO_LOG("config", "server={}", narrow(g.server));
+    MYO_LOG_OVERRIDE("config", "server={}", narrow(g.server));
+    return true;
+}
+
+bool load_dump() {
+    std::wstring dir = dll_dir();
+    std::wstring ini = dir + L"myosotis.ini";
+    g.log_level  = static_cast<int>(GetPrivateProfileIntW(L"myosotis", L"log_level", 1, ini.c_str()));
+    g.dump_level = static_cast<int>(GetPrivateProfileIntW(L"myosotis", L"dump_level", 0, ini.c_str()));
+    MYO_LOG_OVERRIDE("config", "dump_level={}", g.dump_level);
     return true;
 }
 

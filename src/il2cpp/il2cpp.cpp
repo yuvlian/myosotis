@@ -58,11 +58,14 @@ bool init() {
     (void)fn("il2cpp_class_get_namespace");
     (void)fn("il2cpp_class_get_parent");
     (void)fn("il2cpp_class_is_enum");
+    (void)fn("il2cpp_class_is_valuetype");
+    (void)fn("il2cpp_class_is_interface");
     (void)fn("il2cpp_class_get_methods");
     (void)fn("il2cpp_class_get_method_from_name");
     (void)fn("il2cpp_class_get_fields");
     (void)fn("il2cpp_field_get_name");
     (void)fn("il2cpp_field_get_offset");
+    (void)fn("il2cpp_field_get_type");
     (void)fn("il2cpp_class_get_type");
     (void)fn("il2cpp_class_from_type");
     (void)fn("il2cpp_class_is_generic");
@@ -72,7 +75,7 @@ bool init() {
     (void)fn("il2cpp_method_get_param_count");
     (void)fn("il2cpp_method_is_instance");
     (void)fn("il2cpp_type_get_type");
-    (void)fn("il2cpp_type_get_class_or_element_class");
+    (void)fn("il2cpp_type_get_name");
     (void)fn("il2cpp_runtime_invoke");
     (void)fn("il2cpp_runtime_class_init");
     (void)fn("il2cpp_object_get_class");
@@ -140,6 +143,14 @@ bool class_is_enum(Il2CppClass* klass) {
     using Sig = bool (*)(Il2CppClass*);
     return fn_t<Sig>("il2cpp_class_is_enum")(klass);
 }
+bool class_is_valuetype(Il2CppClass* klass) {
+    using Sig = bool (*)(Il2CppClass*);
+    return fn_t<Sig>("il2cpp_class_is_valuetype")(klass);
+}
+bool class_is_interface(Il2CppClass* klass) {
+    using Sig = bool (*)(Il2CppClass*);
+    return fn_t<Sig>("il2cpp_class_is_interface")(klass);
+}
 Il2CppMethod* class_get_methods(Il2CppClass* klass, void** iter) {
     using Sig = Il2CppMethod* (*)(Il2CppClass*, void**);
     return fn_t<Sig>("il2cpp_class_get_methods")(klass, iter);
@@ -159,6 +170,10 @@ const char* field_get_name(Il2CppField* field) {
 size_t field_get_offset(Il2CppField* field) {
     using Sig = size_t (*)(Il2CppField*);
     return fn_t<Sig>("il2cpp_field_get_offset")(field);
+}
+Il2CppType* field_get_type(Il2CppField* field) {
+    using Sig = Il2CppType* (*)(Il2CppField*);
+    return fn_t<Sig>("il2cpp_field_get_type")(field);
 }
 int32_t class_instance_size(Il2CppClass* klass) {
     using Sig = int32_t (*)(Il2CppClass*);
@@ -201,6 +216,11 @@ bool method_is_instance(Il2CppMethod* m) {
 int type_get_type(Il2CppType* t) {
     using Sig = int (*)(Il2CppType*);
     return fn_t<Sig>("il2cpp_type_get_type")(t);
+}
+
+const char* type_get_name(Il2CppType* t) {
+    using Sig = const char* (*)(Il2CppType*);
+    return fn_t<Sig>("il2cpp_type_get_name")(t);
 }
 Il2CppClass* type_get_class_or_element_class(Il2CppType* t) {
     using Sig = Il2CppClass* (*)(Il2CppType*);

@@ -4,6 +4,7 @@ REM Usage: build.bat
 REM build.bat             build everything
 REM build.bat dll         build myosotis.dll only
 REM build.bat loader      build myoink.exe loader only
+REM build.bat dump        build myodump.dll only
 REM build.bat test        build test_scan.exe only
 
 setlocal enabledelayedexpansion
@@ -22,9 +23,21 @@ if "%WHAT%"=="" set WHAT=all
 
 if /i "%WHAT%"=="dll"    (call :build_dll    & goto :done)
 if /i "%WHAT%"=="loader" (call :build_loader & goto :done)
+if /i "%WHAT%"=="dump"   (call :build_dump   & goto :done)
 if /i "%WHAT%"=="test"   (call :build_test   & goto :done)
-if /i "%WHAT%"=="all"    (call :build_dll & if errorlevel 1 goto :done) & (call :build_loader & if errorlevel 1 goto :done) & call :build_test & goto :done
-echo unknown target: %WHAT%
+if /i "%WHAT%"=="all" (
+    call :build_dll
+    if errorlevel 1 goto :done
+
+    call :build_loader
+    if errorlevel 1 goto :done
+
+    call :build_dump
+    if errorlevel 1 goto :done
+
+    call :build_test
+    goto :done
+)
 exit /b 2
 
 :build_dll
@@ -54,11 +67,24 @@ if errorlevel 1 ( echo LOADER BUILD FAILED & exit /b 1 )
 echo built build\myoink.exe
 exit /b 0
 
+:build_dump
+set DSRC=^
+src\dump.cpp ^
+src\log.cpp ^
+src\config.cpp ^
+src\il2cpp\pe.cpp ^
+src\il2cpp\scan.cpp ^
+src\il2cpp\il2cpp_names.cpp ^
+src\il2cpp\il2cpp.cpp
+%ZIG% c++ %OPT% -shared %DSRC% -lkernel32 -luser32 -o build\myodump.dll
+if errorlevel 1 ( echo DUMP BUILD FAILED & exit /b 1 )
+echo built build\myodump.dll
+exit /b 0
+
 :build_test
 set TSRC=^
 tools\test_scan.cpp ^
 src\log.cpp ^
-src\config.cpp ^
 src\il2cpp\pe.cpp ^
 src\il2cpp\scan.cpp ^
 src\il2cpp\il2cpp_names.cpp

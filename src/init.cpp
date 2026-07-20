@@ -57,13 +57,15 @@ bool wait_for_domain_ready() {
 }  // namespace
 
 bool init_all() {
-    log_init();
-    MYO_LOG("init", "myosotis native plugin starting");
-
+    // Initialize logging at default level first so config::load() can log.
+    log_init(1);
     if (!myosotis::config::load()) {
-        MYO_LOG("init", "config load failed");
+        MYO_LOG_ERROR("init", "config load failed");
         return false;
     }
+    // Apply the configured log level.
+    g_log_level = myosotis::config::g.log_level;
+    MYO_LOG("init", "myosotis starting");
 
     if (!wait_for_il2cpp_ready()) {
         MYO_LOG("init", "il2cpp name resolution failed");

@@ -85,7 +85,7 @@ bool install_guard() {
         const char* name = il2cpp::image_get_name(img);
         if (!name) continue;
         // Log every image name so we can see what the runtime actually exposes.
-        MYO_LOG("guard", "image[{}]: {}", i, name);
+        MYO_LOG_DEBUG("guard", "image[{}]: {}", i, name);
         if (!strstr(name, "JsonExtensions")) continue;
         MYO_LOG("guard", "found image: {}", name);
 

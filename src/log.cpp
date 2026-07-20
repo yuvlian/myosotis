@@ -5,7 +5,6 @@
 // line to myosotis.log next to the DLL, so a failed init leaves a visible trail.
 
 #include "log.hpp"
-#include "config.hpp"
 #include <windows.h>
 #include <string>
 #include <string_view>
@@ -22,14 +21,14 @@ CRITICAL_SECTION g_log_lock;
 bool g_log_lock_inited = false;
 bool g_have_console = false;
 
-void ensure_log_path() {
+void ensure_log_path(const wchar_t* log_name) {
     if (!g_log_path.empty()) return;
     if (!g_log_lock_inited) {
         InitializeCriticalSection(&g_log_lock);
         g_log_lock_inited = true;
     }
-    // Log next to the DLL. Since myoink loads myosotis.dll from next to
-    // itself, this puts myosotis.log in the myoink directory.
+    // Log next to the DLL. Since myoink loads the DLL from next to
+    // itself, this puts the log file in the myoink directory.
     wchar_t exe[MAX_PATH] = {};
     HMODULE h = nullptr;
     GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
@@ -40,14 +39,14 @@ void ensure_log_path() {
         auto slash = p.find_last_of(L"\\/");
         if (slash != std::wstring::npos) p.resize(slash + 1);
         else p.clear();
-        g_log_path = p + L"myosotis.log";
+        g_log_path = p + (log_name ? log_name : L"myosotis.log");
     } else {
-        g_log_path = L"myosotis.log";
+        g_log_path = log_name ? log_name : L"myosotis.log";
     }
 }
 
 void write_file(const std::string& line) {
-    ensure_log_path();
+    ensure_log_path(nullptr);
     EnterCriticalSection(&g_log_lock);
     if (HANDLE h = CreateFileW(g_log_path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
                                nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -86,13 +85,13 @@ void write_console(const std::string& line) {
 }
 
 }  // namespace
-void log_init() {
-    // Read log_level from config before anything else.
-    g_log_level = myosotis::config::g.log_level;
+void log_init(int level, const wchar_t* log_name) {
+    g_log_level = level;
     alloc_console();
-    OutputDebugStringW(L"[Myosotis] logging via OutputDebugStringW + myosotis.log + console\n");
-    // Truncate the log on each fresh load so you don't see stale output.
-    ensure_log_path();
+    // Force the log path: clear any path lazily cached by write_file before
+    // log_init was called, so the explicit log_name always wins.
+    g_log_path.clear();
+    ensure_log_path(log_name);
     EnterCriticalSection(&g_log_lock);
     if (HANDLE h = CreateFileW(g_log_path.c_str(), GENERIC_WRITE, 0, nullptr,
                                CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);

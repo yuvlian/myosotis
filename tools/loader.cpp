@@ -1,17 +1,21 @@
-// myoink: inject myosotis.dll into a running Limbus Company process.
+// myoink: inject a DLL into a running Limbus Company process.
 //
-// Usage: myoink
+// Usage: myoink [dump]
 //
-// No arguments. Looks for `myosotis.dll` in the same directory as this exe
-// (so the loader and the DLL can live anywhere). Polls up to 5 minutes for a
-// top-level window whose title exactly equals "LimbusCompany", opens its
-// process, and injects via VirtualAllocEx + CreateRemoteThread(LoadLibraryW).
-// Launch Limbus through Steam first; the launcher's anti-cheat has already
-// passed by the time the window is up, so attaching to the windowed process
-// works (matching the process image name catches the launcher, which has
-// ACCESS_DENIED on CreateRemoteThread).
-// The DLL writes myosotis.log next to itself (the DLL is loaded from wherever
-// myoink found it), so logs follow the loader without any env-var plumbing.
+// No arguments  → injects myosotis.dll (the patch DLL).
+// "dump"        → injects myodump.dll (the il2cpp dumper).
+//
+// Looks for the DLL in the same directory as this exe (so the loader and DLLs
+// can live anywhere). Polls up to 5 minutes for a top-level window whose title
+// exactly equals "LimbusCompany", opens its process, and injects via
+// VirtualAllocEx + CreateRemoteThread(LoadLibraryW). Launch Limbus through
+// Steam first; the launcher's anti-cheat has already passed by the time the
+// window is up, so attaching to the windowed process works (matching the
+// process image name catches the launcher, which has ACCESS_DENIED on
+// CreateRemoteThread).
+//
+// Each DLL writes its log file next to itself (the DLL is loaded from wherever
+// myoink found it). myodump also writes ./dump/ next to itself.
 //
 // LoadLibraryW is resolved via kernel32 (fixed base across processes per boot).
 
@@ -23,7 +27,8 @@
 namespace {
 
 constexpr const wchar_t* kWindowTitle = L"LimbusCompany";
-constexpr const wchar_t* kDllName  = L"myosotis.dll";
+constexpr const wchar_t* kDllName     = L"myosotis.dll";
+constexpr const wchar_t* kDumpDllName = L"myodump.dll";
 constexpr int kWaitPollMs   = 500;
 constexpr int kWaitMaxPolls = 600;  // 600 * 500ms = 5 minutes
 
@@ -110,17 +115,26 @@ bool inject_dll(HANDLE proc, const std::wstring& dll_path) {
 }
 
 }  // namespace
+int wmain(int argc, wchar_t** argv) {
+    // Pick the DLL: "dump" arg → myodump.dll, else myosotis.dll.
+    const wchar_t* dll_name = kDllName;
+    if (argc >= 2 && std::wcscmp(argv[1], L"dump") == 0) {
+        dll_name = kDumpDllName;
+        std::fprintf(stderr, "[myoink] mode: dump\n");
+    } else if (argc >= 2) {
+        fail("unknown argument (expected: dump)");
+        return 1;
+    }
 
-int wmain() {
     // Resolve the DLL: next to this exe, or in the cwd as a fallback.
     std::wstring dir = exe_dir();
-    std::wstring dll_rel = dir.empty() ? std::wstring(kDllName) : (dir + kDllName);
+    std::wstring dll_rel = dir.empty() ? std::wstring(dll_name) : (dir + dll_name);
     std::wstring dll = abs_path(dll_rel);
     if (dll.empty() || GetFileAttributesW(dll.c_str()) == INVALID_FILE_ATTRIBUTES) {
-        dll = abs_path(std::wstring(kDllName));  // fallback: cwd
+        dll = abs_path(std::wstring(dll_name));  // fallback: cwd
     }
     if (dll.empty() || GetFileAttributesW(dll.c_str()) == INVALID_FILE_ATTRIBUTES) {
-        fail("could not find myosotis.dll next to myoink.exe");
+        fail("could not find the DLL next to myoink.exe");
         return 2;
     }
     std::fprintf(stderr, "[myoink] dll: %ls\n", dll.c_str());
@@ -147,6 +161,6 @@ int wmain() {
     bool ok = inject_dll(proc, dll);
     CloseHandle(proc);
     if (!ok) { fail("injection failed"); return 23; }
-    std::fprintf(stderr, "[myoink] injected, myosotis running in target\n");
+    std::fprintf(stderr, "[myoink] injected, myoinking it!\n");
     return 0;
 }
