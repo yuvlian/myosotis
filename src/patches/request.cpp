@@ -16,6 +16,59 @@ namespace myosotis::patches {
 
 namespace {
 
+// Token field names to replace in sign-in request bodies.
+const char* kTokenFields[] = {
+    "steamToken", "googleToken", "authToken", "appleToken",
+};
+
+// If the request path contains "SignInAs" (but not "SignInAsNewGuest"),
+// replace the value of any token field in the JSON body with our token.
+std::string g_token_utf8;
+
+bool should_inject_token(const std::string& path) {
+    if (path.find("SignInAs") == std::string::npos) return false;
+    if (path.find("SignInAsNewGuest") != std::string::npos) return false;
+    return true;
+}
+
+// Replace "FieldName":"value" with "FieldName":"<our token>" in a JSON body.
+// Handles both "field":"..." and "field": "..." (with optional spaces).
+void inject_token(std::string& body, const std::string& token) {
+    if (token.empty()) return;
+    for (const char* field : kTokenFields) {
+        // Search for "field":"value" — we need to find the field key, then
+        // the colon, then the string value, and replace the value.
+        std::string key = std::format("\"{}\"", field);
+        size_t pos = 0;
+        while ((pos = body.find(key, pos)) != std::string::npos) {
+            size_t v = pos + key.size();
+            // Skip whitespace and colon.
+            while (v < body.size() && (body[v] == ' ' || body[v] == '\t')) ++v;
+            if (v >= body.size() || body[v] != ':') { pos = v; continue; }
+            ++v;
+            while (v < body.size() && (body[v] == ' ' || body[v] == '\t')) ++v;
+            if (v >= body.size() || body[v] != '"') { pos = v; continue; }
+            // Found the opening quote of the value. Find the closing quote
+            // (handle escaped quotes).
+            ++v;
+            size_t vstart = v;
+            while (v < body.size()) {
+                if (body[v] == '\\' && v + 1 < body.size()) { v += 2; continue; }
+                if (body[v] == '"') break;
+                ++v;
+            }
+            if (v > vstart) {
+                body.replace(vstart, v - vstart, token);
+                MYO_LOG_OVERRIDE("request", "injected token into {} field", field);
+                // Advance past the replacement + closing quote.
+                pos = vstart + token.size() + 1;
+            } else {
+                pos = v + 1;
+            }
+        }
+    }
+}
+
 std::string narrow(const std::wstring& w) {
     if (w.empty()) return {};
     int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
@@ -427,6 +480,13 @@ extern "C" void __cdecl myosotis_add_request(il2cpp::Il2CppObject* self, il2cpp:
             }
         }
     }
+
+    // If this is a sign-in request (except SignInAsNewGuest), inject our token
+    // into any token field (steamToken, googleToken, authToken, appleToken).
+    if (should_inject_token(path)) {
+        inject_token(body_out, g_token_utf8);
+    }
+
     MYO_LOG_DEBUG("request", "POST {} (path={} pid={} body_len={})", final_url, path, map_pid.empty() ? "none" : map_pid, body_out.size());
 
     myosotis::http::Response r = myosotis::http::post(final_url, body_out, map_pid);
@@ -511,6 +571,12 @@ void install_one(const char* ns, const char* klass, const char* method,
 }  // namespace (anonymous)
 
 bool install_request() {
+    g_token_utf8 = narrow(myosotis::config::g.token);
+    if (g_token_utf8.empty()) {
+        MYO_LOG_OVERRIDE("request", "no token set in myosotis.ini; sign-in token injection will be skipped");
+    } else {
+        MYO_LOG_OVERRIDE("request", "token loaded ({} bytes)", g_token_utf8.size());
+    }
     build_packet_id_map();
     install_one("Server", "HttpApiRequester", "AddRequest",
                 reinterpret_cast<void*>(&myosotis_add_request));

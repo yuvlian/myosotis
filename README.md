@@ -6,11 +6,15 @@ a native port of the subset of lethe bepinex plugin that can be built with zig 0
 
 1. **guard** - this is originally to neutralize `JsonExtensions` (which is limbus anticheat thing) but its obsolete cuz they removed it. its good to keep around tho for future references.
 
-2. **login** - patches the steam token for the private server to actually process. as of right now, im simply hardcoding it.
+2. **login** - currently unused. was for replacing the steam login process with our own custom login. as of right now, the request patch handles token injection instead, so this is just kept around for future reference.
 
 3. **http** - redirect http requests except for cdn requests
 
-4. **request** - normally limbus requests are encrypted and such. packets also have packetids (one for request, one for response). to resolve these annoyances for PS development, we simply replace the game's http stack with our own using WinHTTP. the packetid in the request body will be instead a packetid for the response. the patch also injects x-expected-packet-id header if you prefer parsing from there.
+4. **request** - normally limbus requests are encrypted and such. packets also have packetids (one for request, one for response). to resolve these annoyances for PS development, we simply replace the game's http stack with our own using WinHTTP.
+
+    the packetid in the request body will be instead a packetid for the response. the patch also injects x-expected-packet-id header if you prefer parsing from there.
+    
+    this patch also handles token injection for sign in requests, replacing steamToken/googleToken/authToken/appleToken fields in the body with our token from the config file (myosotis.ini)
 
 ## building
 
@@ -98,8 +102,7 @@ cpp/
 │   │   └── il2cpp.cpp      typed il2cpp C API bridge
 │   └── patches/
 │       ├── guard.cpp       anti-cheat neutralization
-│       ├── login.cpp       steam token patcher
-│       ├── http.cpp        for http request redirect
+│       ├── login.cpp       steam login patcher (currently unused)
 │       └── request.cpp     make the game use custom http stack
 ├── tools/
 │   ├── loader.cpp          injector (myoink.exe)

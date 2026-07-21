@@ -4,7 +4,6 @@
 #include "il2cpp.hpp"
 #include "log.hpp"
 #include "patches/guard.hpp"
-#include "patches/login.hpp"
 #include "patches/http.hpp"
 #include "patches/request.hpp"
 #include <windows.h>
@@ -93,10 +92,9 @@ bool init_all() {
     }
 
     // Install patches. Order matters: GuardPatch first (neutralize anti-cheat
-    // before any of our other code runs game methods), then Login (auth),
-    // then Http (redirects), then Request (transport replacement).
+    // before any of our other code runs game methods), then Http (redirects),
+    // then Request (transport replacement + token injection).
     myosotis::patches::install_guard();
-    myosotis::patches::install_login();
     myosotis::patches::install_http();
     myosotis::patches::install_request();
 
